@@ -1,0 +1,14 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bb-patchright
+    environment:
+      HEADLESS: "true"
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./profile:/app/profile
+    shm_size: "1gb"
+    stdin_open: true
+    tty: true
