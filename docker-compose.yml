@@ -32,8 +32,22 @@ services:
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_NAME: buybaybye
+      
+      # Режим ставок (включить: "true", отключить: "false")
+      BET_MODE: "false"
+      BET_OUTCOME: "red"                    # red или black
+      BET_SPECIFIER: "5"                    # значение кубика (1-6)
+      
+      # Выбор стратегии из папки strategies/ (см. strategies/*.yaml)
+      STRATEGY: "martingale_classic"        # Доступные: martingale_classic, fibonacci_aggressive, flat_betting, dalambert, exponential, balanced, ultra_aggressive, conservative_stepped, cycle_recovery, doubling_cycle
+      BASE_BET: "10"                        # базовая ставка (должна делиться на 10 нацело)
+      
+      # Случайная задержка перед ставкой (в секундах) - для "человеческого" поведения
+      BET_DELAY_MIN: "0.8"
+      BET_DELAY_MAX: "1.5"
     volumes:
       - ./profile:/app/profile
+      - ./strategies:/app/strategies:ro
     shm_size: "1gb"
     stdin_open: true
     tty: true

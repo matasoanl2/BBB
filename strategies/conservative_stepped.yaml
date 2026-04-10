@@ -1,0 +1,5 @@
+name: "Conservative Stepped"
+description: "Осторожная прогрессия с длительными паузами на каждом уровне"
+coefficients: [1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]
+payout_coefficient: 5.7
+reset_condition: "win"

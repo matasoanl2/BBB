@@ -1,0 +1,5 @@
+name: "D'Alembert Linear"
+description: "Линейная прогрессия - минимальный риск"
+coefficients: [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+payout_coefficient: 5.7
+reset_condition: "win"

@@ -40,6 +40,7 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt && patchright install chromium
 
 COPY main.py analys.py import_export.py .
+COPY strategies/ ./strategies/
 RUN mkdir -p /app/profile
 
 CMD ["xvfb-run", "-a", "python", "-u", "main.py"]

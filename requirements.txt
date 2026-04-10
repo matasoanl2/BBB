@@ -1,2 +1,5 @@
 patchright
 psycopg2-binary
+requests
+aiohttp
+PyYAML
