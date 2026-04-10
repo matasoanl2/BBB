@@ -39,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install -r requirements.txt && patchright install chromium
 
-COPY main.py .
+COPY main.py analys.py import_export.py .
 RUN mkdir -p /app/profile
 
 CMD ["xvfb-run", "-a", "python", "-u", "main.py"]

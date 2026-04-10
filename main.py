@@ -1,6 +1,7 @@
 """
 Patchright с одной постоянной сессией: данные профиля лежат в каталоге SESSION_DIR.
 При каждом запуске используется тот же профиль; после закрытия браузера состояние остается на диске.
+Сохранение данных в PostgreSQL вместо JSON.
 """
 from __future__ import annotations
 
@@ -11,11 +12,51 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from patchright.async_api import async_playwright
+import psycopg2
+from psycopg2.extras import Json
 
 SESSION_DIR = Path(__file__).resolve().parent / "profile"
 TARGET_WS_URL = "wss://ws.betboom.ru:444/api/nards_studio_ws/v1"
-TARGET_WS_LOG_FILE = SESSION_DIR / "target_ws_messages.json"
 HEADLESS = os.getenv("HEADLESS", "false").lower() in {"1", "true", "yes", "on"}
+
+# PostgreSQL config
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "buybaybye")
+
+
+def _get_db_connection():
+    """Получить подключение к PostgreSQL с автоматическим созданием таблицы"""
+    conn = psycopg2.connect(
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME
+    )
+    
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS game_results (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP WITH TIME ZONE,
+            player_name TEXT,
+            dice_results JSONB,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_timestamp ON game_results(timestamp)
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_player ON game_results(player_name)
+    """)
+    conn.commit()
+    cursor.close()
+    
+    return conn
 
 
 def _format_ws_payload(payload: object) -> str:
@@ -27,17 +68,8 @@ def _format_ws_payload(payload: object) -> str:
     return str(payload)
 
 
-def _load_saved_messages(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return []
-    return data if isinstance(data, list) else []
-
-
-def _append_target_ws_message(path: Path, payload: object) -> None:
+def _save_target_ws_message(payload: object) -> None:
+    """Сохранить сообщение в PostgreSQL"""
     payload_text = _format_ws_payload(payload)
     try:
         parsed_payload = json.loads(payload_text)
@@ -53,14 +85,23 @@ def _append_target_ws_message(path: Path, payload: object) -> None:
     if not isinstance(results, dict):
         return
 
-    messages = _load_saved_messages(path)
-    messages.append(
-        {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "results": results,
-        }
-    )
-    path.write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+        
+        player_name = results.get("player", {}).get("name", "unknown")
+        timestamp = datetime.now(timezone.utc)
+        
+        cursor.execute("""
+            INSERT INTO game_results (timestamp, player_name, dice_results)
+            VALUES (%s, %s, %s)
+        """, (timestamp, player_name, Json(results)))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"[DB ERROR] Ошибка сохранения в БД: {e}", flush=True)
 
 
 def _wire_ws_logging(page) -> None:
@@ -75,7 +116,7 @@ def _wire_ws_logging(page) -> None:
         def on_received(payload) -> None:
             print(f"[{tag} <<] {_format_ws_payload(payload)}", flush=True)
             if is_target:
-                _append_target_ws_message(TARGET_WS_LOG_FILE, payload)
+                _save_target_ws_message(payload)
 
         def on_close(*_) -> None:
             print(f"[{tag} CLOSE] {ws.url}", flush=True)

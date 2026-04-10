@@ -1,4 +1,6 @@
-import json
+import os
+import psycopg2
+from datetime import datetime, timezone
 
 # === НАСТРОЙКИ ===
 STAKAN = 3           # число 3 — наименьший avg gap (4.79) и max gap (32), частота 17.25%
@@ -10,9 +12,62 @@ DICE_COLOR = "red"
 # bet * (5.7 - 1) >= sum(prev_bets) + min_profit  =>  bet >= (sum_prev + profit) / 4.7
 BET_SEQUENCE = [10, 10, 10, 10, 10, 15, 15, 20, 25, 30, 35, 45, 55, 65, 80]
 
+# === DATABASE CONFIG ===
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "buybaybye")
+
+
+def get_rounds_from_db():
+    """Получить раунды из PostgreSQL в формате совместимом с анализатором"""
+    try:
+        conn = psycopg2.connect(
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME
+        )
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT timestamp, player_name, dice_results 
+            FROM game_results 
+            ORDER BY timestamp ASC
+        """)
+        
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        rounds = []
+        for row in rows:
+            timestamp, player_name, dice_results = row
+            rounds.append({
+                "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else str(timestamp),
+                "results": {
+                    **dice_results,
+                    "player": {"name": player_name}
+                }
+            })
+        
+        return rounds
+    except Exception as e:
+        print(f"Ошибка подключения к БД: {e}")
+        print("Убедитесь, что PostgreSQL запущен и доступен.")
+        exit(1)
+
+
 # === ЗАГРУЗКА ДАННЫХ ===
-with open("target_ws_messages.json", encoding="utf-8") as f:
-    rounds = json.load(f)
+print("Подключение к PostgreSQL...", flush=True)
+rounds = get_rounds_from_db()
+
+if not rounds:
+    print("ОШИБКА: Нет данных в базе данных. Запустите main.py для сбора данных.")
+    exit(1)
+
+print(f"Загружено {len(rounds)} раундов из БД", flush=True)
 
 # === СИМУЛЯЦИЯ ===
 balance = START_BALANCE

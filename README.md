@@ -1,46 +1,50 @@
 # BuyBayBye — Анализатор стратегии беттинга на Betboom
 
-Проект для автоматизации сбора данных о результатах игры в кости на betboom.ru и анализа беттинговой стратегии с использованием прогрессии ставок.
+Проект для автоматизации сбора данных о результатах игры в кости на betboom.ru и анализа беттинговой стратегии с использованием прогрессии ставок. Данные хранятся в **PostgreSQL** с возможностью импорта/экспорта в JSON.
 
 ## 📋 Описание
 
-Проект состоит из двух основных компонентов:
+Проект состоит из трёх основных компонентов:
 
-1. **main.py** — автоматизация браузера для сбора реальных данных
-2. **analys.py** — симуляция беттинговой стратегии на основе собранных данных
+1. **main.py** — автоматизация браузера для сбора реальных данных в PostgreSQL
+2. **analys.py** — симуляция беттинговой стратегии на основе данных из БД
+3. **import_export.py** — импорт из JSON и экспорт в JSON файлы (по 100МБ)
+
+## 🗄️ Упор на PostgreSQL
+
+Данные теперь хранятся в **PostgreSQL** вместо JSON:
+- ✅ Быстрые поиски и индексы
+- ✅ Структурированные данные (JSONB)
+- ✅ Надежность и ACID гарантии (идеально для финансвых данных)
+- ✅ Автоматическое создание схемы
 
 ## 🔧 Компоненты проекта
 
-### main.py — Сборщик данных
+### main.py — Сборщик данных в PostgreSQL
 
-Использует **Patchright** (форк Playwright) для автоматизации браузера:
+Использует **Patchright** для автоматизации браузера:
 
 - Подключается к WebSocket серверу betboom.ru: `wss://ws.betboom.ru:444/api/nards_studio_ws/v1`
 - Перехватывает все WebSocket сообщения
 - Фильтрует сообщения со статусом `rng_values` (результаты кубиков)
-- Сохраняет данные в JSON с UTC временными метками в `target_ws_messages.json`
-- Поддерживает постоянную сессию браузера (профиль сохраняется в папке `profile/`)
-- Поддерживает headless режим через переменную окружения `HEADLESS`
+- **Сохраняет данные в PostgreSQL** с UTC временными метками
+- Поддерживает постоянную сессию браузера (профиль в папке `profile/`)
+- Headless режим через переменную окружения `HEADLESS`
 
-**Структура сохраняемых данных:**
-```json
-[
-  {
-    "timestamp": "2026-04-10T12:34:56.789123+00:00",
-    "results": {
-      "dice": [
-        {"color": "red", "value": 3},
-        {"color": "black", "value": 5}
-      ],
-      "player": {"name": "username"}
-    }
-  }
-]
+**Структура таблицы БД:**
+```sql
+CREATE TABLE game_results (
+    id SERIAL PRIMARY KEY,
+    timestamp TIMESTAMP WITH TIME ZONE,
+    player_name TEXT,
+    dice_results JSONB,  -- Результаты кубиков в JSON формате
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 ```
 
-### analys.py — Анализатор стратегии
+### analys.py — Анализатор стратегии из PostgreSQL
 
-Симулирует беттинговую стратегию на реальных данных:
+Симулирует беттинговую стратегию на реальных данных из БД:
 
 **Параметры стратегии:**
 - **Целевой результат:** красный кубик со значением 3
@@ -59,77 +63,132 @@
 
 **Выведение:**
 - Детальный лог каждой ставки с временем, игроком, результатом и балансом
-- Статистика:
-  - Всего ходов и побед
-  - Win rate процент
-  - Макс. серия без побед (losing streak)
-  - Количество завершённых циклов
-  - ROI (Return on Investment)
+- Статистика: побед, win rate, макс. losing streak, ROI
+
+### import_export.py — Импорт/Экспорт данных
+
+Двусторонний скрипт для работы с JSON:
+
+**Импорт из JSON в PostgreSQL:**
+```bash
+python import_export.py import target_ws_messages.json
+```
+- Читает JSON файл (массив объектов с timestamp и results)
+- Автоматически пропускает дубликаты
+- Сохраняет в таблицу `game_results`
+
+**Экспорт из PostgreSQL в JSON по частям (до 100МБ):**
+```bash
+python import_export.py export ./exports
+```
+- Экспортирует все данные из БД
+- Разбивает на файлы: `game_data_part_001.json`, `game_data_part_002.json` и т.д.
+- Каждый файл ≤ 100МБ
 
 ## 📦 Зависимости
 
 ```
 patchright
+psycopg2-binary
 ```
 
-Дополнительно устанавливается браузер Chromium при сборке Docker контейнера.
+## 🐳 Docker (Рекомендуется)
 
-## 🐳 Docker
-
-**Dockerfile:**
-- Base: `python:3.13-slim`
-- Установлены все необходимые системные зависимости для браузера (GTK, X11, etc.)
-- Xvfb для виртуального дисплея (headless режим)
-- Автоматическая установка Chromium
+Проект включает полную Docker конфигурацию с PostgreSQL сервером.
 
 **docker-compose.yml:**
-```yaml
-services:
-  app:
-    build: .
-    container_name: bb-patchright
-    environment:
-      HEADLESS: "true"
-    volumes:
-      - ./profile:/app/profile  # Постоянное хранилище сессии браузера
-    shm_size: "1gb"             # Достаточно памяти для браузера
+- **postgres** сервис: PostgreSQL 15 Alpine
+- **app** сервис: Patchright приложение
+- БД файлы сохраняются в `./postgres_data/` (вне контейнера)
+- Автоматическое создание БД `buybaybye`
+
+### Структура томов:
+```
+./profile/          → /app/profile (профиль браузера)
+./postgres_data/    → /var/lib/postgresql/data (БД вне контейнера)
 ```
 
 ## 🚀 Использование
 
-### Локально
+### Локально (с локальным PostgreSQL)
 
-1. **Установить зависимости:**
+1. **Убедитесь, что PostgreSQL запущен:**
+   ```bash
+   # Подключение должно быть доступно на localhost:5432
+   # Пользователь: postgres, пароль: postgres (или настройте переменные окружения)
+   ```
+
+2. **Установить зависимости:**
    ```bash
    pip install -r requirements.txt
    ```
 
-2. **Запустить сборщик данных:**
+3. **Запустить сборщик данных:**
    ```bash
    python main.py
    ```
    - Браузер откроется и подключится к betboom.ru
-   - Данные будут сохраняться в `target_ws_messages.json`
+   - Данные будут сохраняться в PostgreSQL
    - Остановить: Ctrl+C
 
-3. **Запустить анализ:**
+4. **Запустить анализ:**
    ```bash
    python analys.py
    ```
-   - Использует данные из `target_ws_messages.json`
-   - Выводит детальный лог и статистику
 
-### Docker
-
-1. **Запустить контейнер:**
+5. **(опционально) Экспортировать в JSON:**
    ```bash
-   docker-compose up
+   python import_export.py export ./exports
    ```
 
-2. **В отдельном терминале запустить анализ:**
-   ```bash
-   docker-compose exec app python analys.py
-   ```
+### Docker (Рекомендуется)
+
+#### Запуск с Docker Compose
+
+```bash
+# Запустить PostgreSQL + приложение
+docker-compose up -d
+
+# Просмотр логов
+docker-compose logs -f app
+
+# Остановить
+docker-compose down
+```
+
+#### Запуск отдельных команд в контейнере
+
+```bash
+# Запустить анализ
+docker-compose exec app python analys.py
+
+# Экспортировать в JSON
+docker-compose exec app python import_export.py export ./exports
+
+# Импортировать из JSON (если есть файл в контейнере)
+docker-compose exec app python import_export.py import target_ws_messages.json
+```
+
+#### Доступ к PostgreSQL с хоста
+
+```bash
+# Подключиться напрямую к БД (требуется psql)
+psql -h localhost -U postgres -d buybaybye
+```
+
+## 🔧 Переменные окружения
+
+Для локального запуска можно переопределить:
+```bash
+export DB_USER=postgres
+export DB_PASSWORD=postgres
+export DB_HOST=localhost
+export DB_PORT=5432
+export DB_NAME=buybaybye
+export HEADLESS=false
+```
+
+В Docker они уже установлены в `docker-compose.yml`.
 
 ## 📊 Интерпретация результатов
 
@@ -141,20 +200,35 @@ services:
 ## ⚠️ Важные замечания
 
 1. **Реальные деньги:** Проект работает с реальным веб-сайтом азартных игр
-2. **Первый запуск:** main.py должен собрать достаточно данных перед анализом
-3. **Профиль браузера:** Сохраняется в папке `profile/`, может быть использована существующая сессия
-4. **Headless режим:** Управляется переменной окружения `HEADLESS` (default: false)
+2. **PostgreSQL обязателен:** Проект теперь зависит от PostgreSQL (локально или в Docker)
+3. **БД файлы в проекте:** При использовании Docker `postgres_data/` находится в папке проекта
+4. **.gitignore:** Исключает БД файлы, профиль браузера и JSON сообщения
 
-## 📝 Структура проекта
+## 📁 Структура проекта
 
 ```
 BuyBayBye/
-├── main.py                    # Сборщик WebSocket данных
-├── analys.py                  # Анализатор стратегии
-├── requirements.txt           # Python зависимости
-├── Dockerfile                 # Docker образ
-├── docker-compose.yml         # Docker Compose конфигурация
-├── target_ws_messages.json    # Сохранённые данные (генерируется main.py)
-├── profile/                   # Профиль браузера (генерируется main.py)
-└── README.md                  # Этот файл
+├── main.py                      # Сборщик WebSocket данных → PostgreSQL
+├── analys.py                    # Анализатор стратегии из PostgreSQL
+├── import_export.py             # Импорт/Экспорт JSON ↔ PostgreSQL
+├── requirements.txt             # Python зависимости
+├── Dockerfile                   # Docker образ приложения
+├── docker-compose.yml           # Docker Compose: PostgreSQL + App
+├── .gitignore                   # Исключения для git
+├── profile/                     # Профиль браузера (gitignored)
+├── postgres_data/               # БД файлы (gitignored, вне контейнера)
+├── target_ws_messages.json      # (deprecated) Для импорта старых данных
+└── README.md                    # Этот файл
+```
+
+## 🔄 Миграция со старого формата (JSON)
+
+Если у вас есть старый файл `target_ws_messages.json`, импортируйте его:
+
+```bash
+# Локально
+python import_export.py import target_ws_messages.json
+
+# В Docker
+docker-compose exec app python import_export.py import target_ws_messages.json
 ```
