@@ -6,6 +6,10 @@ postgres_data/
 
 # Browser Profile
 profile/
+profile_backups/
+
+# Exports files
+exports/
 
 # JSON Messages
 target_ws_messages.json
@@ -48,3 +52,5 @@ Thumbs.db
 
 # Docker
 .dockerignore
+.env
+analys_comprehensive_results.txt

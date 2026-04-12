@@ -9,6 +9,13 @@ from datetime import datetime
 import psycopg2
 from psycopg2.extras import Json
 
+try:
+    from tqdm import tqdm
+except ImportError:
+    print("⚠️  Для прогресс-бара нужна библиотека 'tqdm'. Устанавливаю...")
+    os.system("pip install tqdm")
+    from tqdm import tqdm
+
 # PostgreSQL config
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
@@ -55,8 +62,13 @@ def init_db():
     conn.close()
 
 
-def import_from_json(json_file: str):
-    """Импортировать данные из JSON файла в PostgreSQL"""
+def import_from_json(json_file: str, skip_duplicates_check: bool = True):
+    """Импортировать данные из JSON файла в PostgreSQL
+    
+    Args:
+        json_file: Путь к JSON файлу для импорта
+        skip_duplicates_check: Если False, пропускает проверку дубликатов через timestamp
+    """
     json_path = Path(json_file)
     
     if not json_path.exists():
@@ -65,6 +77,9 @@ def import_from_json(json_file: str):
     
     try:
         print(f"📖 Чтение JSON файла: {json_file}")
+        if not skip_duplicates_check:
+            print("⚠️  Проверка дубликатов ОТКЛЮЧЕНА")
+        
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         
@@ -77,46 +92,56 @@ def import_from_json(json_file: str):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Проверка на дубликаты: получить max timestamp
-        cursor.execute("SELECT MAX(timestamp) FROM game_results")
-        max_timestamp = cursor.fetchone()[0]
+        # Проверка на дубликаты: получить max timestamp (если включена проверка)
+        max_timestamp = None
+        if skip_duplicates_check:
+            cursor.execute("SELECT MAX(timestamp) FROM game_results")
+            max_timestamp = cursor.fetchone()[0]
         
         imported_count = 0
         skipped_count = 0
         
-        for item in data:
-            if not isinstance(item, dict):
-                skipped_count += 1
-                continue
-            
-            timestamp_str = item.get("timestamp")
-            results = item.get("results")
-            
-            if not timestamp_str or not results:
-                skipped_count += 1
-                continue
-            
-            # Пропустить, если уже есть в БД
-            try:
-                timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
-            except (ValueError, AttributeError):
-                skipped_count += 1
-                continue
-            
-            if max_timestamp and timestamp <= max_timestamp:
-                skipped_count += 1
-                continue
-            
-            try:
-                player_name = results.get("player", {}).get("name", "unknown")
-                cursor.execute("""
-                    INSERT INTO game_results (timestamp, player_name, dice_results)
-                    VALUES (%s, %s, %s)
-                """, (timestamp, player_name, Json(results)))
-                imported_count += 1
-            except Exception as e:
-                print(f"⚠️  Ошибка импорта записи: {e}")
-                skipped_count += 1
+        # Прогресс-бар для импорта
+        with tqdm(total=len(data), desc="📥 Импорт записей", unit="запись") as pbar:
+            for item in data:
+                if not isinstance(item, dict):
+                    skipped_count += 1
+                    pbar.update(1)
+                    continue
+                
+                timestamp_str = item.get("timestamp")
+                results = item.get("results")
+                
+                if not timestamp_str or not results:
+                    skipped_count += 1
+                    pbar.update(1)
+                    continue
+                
+                # Пропустить, если уже есть в БД (если проверка включена)
+                try:
+                    timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    skipped_count += 1
+                    pbar.update(1)
+                    continue
+                
+                if skip_duplicates_check and max_timestamp and timestamp <= max_timestamp:
+                    skipped_count += 1
+                    pbar.update(1)
+                    continue
+                
+                try:
+                    player_name = results.get("player", {}).get("name", "unknown")
+                    cursor.execute("""
+                        INSERT INTO game_results (timestamp, player_name, dice_results)
+                        VALUES (%s, %s, %s)
+                    """, (timestamp, player_name, Json(results)))
+                    imported_count += 1
+                except Exception as e:
+                    print(f"\n⚠️  Ошибка импорта записи: {e}")
+                    skipped_count += 1
+                
+                pbar.update(1)
         
         conn.commit()
         cursor.close()
@@ -155,53 +180,55 @@ def export_to_json_chunked(output_dir: str = "."):
         
         print(f"📊 Экспорт {total_count} записей из БД")
         
-        # Экспортировать по частям
+        # Экспортировать по частям с прогресс-баром
         chunk_size = 1000  # Начальный размер чанка
         offset = 0
         file_num = 1
         current_chunk = []
         current_size = 0
         
-        while offset <= total_count:
-            cursor.execute("""
-                SELECT timestamp, player_name, dice_results 
-                FROM game_results 
-                ORDER BY timestamp ASC
-                LIMIT %s OFFSET %s
-            """, (chunk_size, offset))
-            
-            rows = cursor.fetchall()
-            if not rows:
-                break
-            
-            for row in rows:
-                timestamp, player_name, dice_results = row
-                item = {
-                    "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else str(timestamp),
-                    "results": {
-                        **dice_results,
-                        "player": {"name": player_name}
+        with tqdm(total=total_count, desc="📤 Экспорт записей", unit="запись") as pbar:
+            while offset <= total_count:
+                cursor.execute("""
+                    SELECT timestamp, player_name, dice_results 
+                    FROM game_results 
+                    ORDER BY timestamp ASC
+                    LIMIT %s OFFSET %s
+                """, (chunk_size, offset))
+                
+                rows = cursor.fetchall()
+                if not rows:
+                    break
+                
+                for row in rows:
+                    timestamp, player_name, dice_results = row
+                    item = {
+                        "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else str(timestamp),
+                        "results": {
+                            **dice_results,
+                            "player": {"name": player_name}
+                        }
                     }
-                }
-                
-                item_json = json.dumps(item, ensure_ascii=False)
-                item_size = len(item_json.encode("utf-8"))
-                
-                # Если добавление этого элемента превысит лимит, сохранить текущий файл
-                if current_size + item_size > MAX_FILE_SIZE and current_chunk:
-                    output_file = output_path / f"game_data_part_{file_num:03d}.json"
-                    with open(output_file, "w", encoding="utf-8") as f:
-                        json.dump(current_chunk, f, ensure_ascii=False, indent=2)
-                    print(f"   Сохранён файл {file_num}: {output_file.name} ({current_size / (1024*1024):.1f} МБ)")
                     
-                    current_chunk = []
-                    current_size = 0
-                    file_num += 1
+                    item_json = json.dumps(item, ensure_ascii=False)
+                    item_size = len(item_json.encode("utf-8"))
+                    
+                    # Если добавление этого элемента превысит лимит, сохранить текущий файл
+                    if current_size + item_size > MAX_FILE_SIZE and current_chunk:
+                        output_file = output_path / f"game_data_part_{file_num:03d}.json"
+                        with open(output_file, "w", encoding="utf-8") as f:
+                            json.dump(current_chunk, f, ensure_ascii=False, indent=2)
+                        pbar.write(f"   Сохранён файл {file_num}: {output_file.name} ({current_size / (1024*1024):.1f} МБ)")
+                        
+                        current_chunk = []
+                        current_size = 0
+                        file_num += 1
+                    
+                    current_chunk.append(item)
+                    current_size += item_size
+                    pbar.update(1)
                 
-                current_chunk.append(item)
-                current_size += item_size
-            
-            offset += chunk_size
+                offset += chunk_size
         
         # Сохранить последний файл
         if current_chunk:
@@ -224,10 +251,13 @@ def export_to_json_chunked(output_dir: str = "."):
 def main():
     if len(sys.argv) < 2:
         print("Использование:")
-        print("  python import_export.py import <json_file>     - Импортировать JSON в БД")
-        print("  python import_export.py export [output_dir]    - Экспортировать БД в JSON (по 100МБ)")
+        print("  python import_export.py import <json_file> [--skip-duplicates]  - Импортировать JSON в БД")
+        print("  python import_export.py export [output_dir]                     - Экспортировать БД в JSON (по 100МБ)")
+        print("\nФлаги:")
+        print("  --skip-duplicates   - Не проверять на дубликаты через timestamp (импортировать всё)")
         print("\nПримеры:")
         print("  python import_export.py import target_ws_messages.json")
+        print("  python import_export.py import data.json --skip-duplicates")
         print("  python import_export.py export ./exports")
         sys.exit(1)
     
@@ -236,9 +266,14 @@ def main():
     if command == "import":
         if len(sys.argv) < 3:
             print("❌ Укажите файл JSON для импорта")
-            print("  python import_export.py import <json_file>")
+            print("  python import_export.py import <json_file> [--skip-duplicates]")
             sys.exit(1)
-        import_from_json(sys.argv[2])
+        
+        json_file = sys.argv[2]
+        # Проверить наличие флага --skip-duplicates (инвертируем логику: skip_duplicates_check = False означает не проверять)
+        skip_check = "--skip-duplicates" not in sys.argv
+        
+        import_from_json(json_file, skip_duplicates_check=skip_check)
     
     elif command == "export":
         output_dir = sys.argv[2] if len(sys.argv) > 2 else "."

@@ -1,5 +1,7 @@
 patchright
 psycopg2-binary
 requests
-aiohttp
 PyYAML
+tabulate
+tqdm
+python-dotenv

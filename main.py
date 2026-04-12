@@ -16,7 +16,6 @@ from pathlib import Path
 from patchright.async_api import async_playwright
 import psycopg2
 from psycopg2.extras import Json
-import aiohttp
 import yaml
 
 SESSION_DIR = Path(__file__).resolve().parent / "profile"
@@ -34,7 +33,7 @@ DB_NAME = os.getenv("DB_NAME", "buybaybye")
 
 # Режим ставок
 BET_MODE_ENABLED = os.getenv("BET_MODE", "false").lower() in {"1", "true", "yes", "on"}
-BET_MODE_OUTCOME = os.getenv("BET_OUTCOME", "red")  # red или black
+BET_MODE_OUTCOME = os.getenv("BET_OUTCOME", "red")  # red или yellow
 BET_MODE_SPECIFIER = os.getenv("BET_SPECIFIER", "5")  # значение кубика (1-6)
 BASE_BET = float(os.getenv("BASE_BET", "10"))  # базовая ставка (должна делиться на 10)
 STRATEGY_NAME = os.getenv("STRATEGY", "martingale_classic")  # название стратегии
@@ -43,10 +42,143 @@ STRATEGY_NAME = os.getenv("STRATEGY", "martingale_classic")  # название 
 BET_DELAY_MIN = float(os.getenv("BET_DELAY_MIN", "0.8"))
 BET_DELAY_MAX = float(os.getenv("BET_DELAY_MAX", "1.5"))
 
+# Логирование WebSocket
+WS_LOG_ENABLED = os.getenv("WS_LOG_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+
+# Логирование отладки ставок
+BET_DEBUG_ENABLED = os.getenv("BET_DEBUG_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+
+# Цветной вывод в консоль
+COLOR_ENABLED = os.getenv("COLOR_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+
+# ANSI цветовые коды для консоли (будут использоваться только если COLOR_ENABLED=true)
+COLOR_GREEN = "\033[92m" if COLOR_ENABLED else ""
+COLOR_RED = "\033[91m" if COLOR_ENABLED else ""
+COLOR_YELLOW = "\033[93m" if COLOR_ENABLED else ""
+COLOR_CYAN = "\033[96m" if COLOR_ENABLED else ""
+COLOR_RESET = "\033[0m" if COLOR_ENABLED else ""
+
 # Хранилище загруженных стратегий
 loaded_strategies = {}
 current_strategy = None
+jwt_token_global = None  # Глобальное хранилище найденного JWT токена
 
+
+def _handle_response(response):
+    """
+    Обработать ответ и поискать JWT токен в теле ответа
+    JWT всегда начинается с eyJ в base64 кодировании
+    Запускает асинхронную обработку в фоне
+    """
+    # Создать асинхронную задачу для обработки ответа
+    asyncio.create_task(_handle_response_async(response))
+
+
+async def _handle_response_async(response):
+    """
+    Асинхронная обработка ответа для поиска JWT токена
+    """
+    global jwt_token_global
+    try:
+        # Проверить заголовки ответа (Authorization, Set-Cookie, etc)
+        auth_header = response.headers.get("authorization", "")
+        if "eyJ" in auth_header:
+            # Извлечь Bearer token из Authorization заголовка
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]
+                if "." in token:
+                    jwt_token_global = token
+                    print(f"{COLOR_CYAN}🔥 JWT НАЙДЕН в заголовке Authorization: {token[:50]}...{COLOR_RESET}", flush=True)
+                    return
+        
+        # Проверить тело ответа
+        text = await response.text()
+        if "eyJ" in text:
+            # Попробовать найти JWT токен в ответе
+            start_idx = text.find("eyJ")
+            if start_idx != -1:
+                end_idx = start_idx
+                while end_idx < len(text) and (text[end_idx].isalnum() or text[end_idx] in '_-'):
+                    end_idx += 1
+                
+                potential_token = text[start_idx:end_idx]
+                if potential_token.count('.') >= 1:
+                    jwt_token_global = potential_token
+                    print(f"{COLOR_CYAN}🔥 JWT НАЙДЕН в теле ответа: {potential_token[:50]}...{COLOR_RESET}", flush=True)
+    except Exception as e:
+        pass  # Игнорируем ошибки при обработке ответа
+
+
+def _handle_request(request):
+    """
+    Перехватить запрос и поискать JWT токен в URL, заголовках и теле запроса
+    """
+    global jwt_token_global
+    try:
+        # Проверить URL параметры (особенно token=...)
+        url = request.url
+        if "token=" in url:
+            start_idx = url.find("token=") + 6
+            end_idx = url.find("&", start_idx)
+            if end_idx == -1:
+                end_idx = len(url)
+            
+            potential_token = url[start_idx:end_idx]
+            if "eyJ" in potential_token and potential_token.count('.') >= 1:
+                jwt_token_global = potential_token
+                print(f"{COLOR_CYAN}🔥 JWT НАЙДЕН в URL параметре: {potential_token[:50]}...{COLOR_RESET}", flush=True)
+                return
+        
+        # Проверить заголовки запроса (Authorization, Referer содержит token, etc)
+        auth_header = request.headers.get("Authorization", "")
+        if "Bearer eyJ" in auth_header:
+            token = auth_header.replace("Bearer ", "").strip()
+            if "." in token:
+                jwt_token_global = token
+                print(f"{COLOR_CYAN}🔥 JWT НАЙДЕН в заголовке Authorization запроса: {token[:50]}...{COLOR_RESET}", flush=True)
+                return
+        
+        # Проверить Referer заголовок (может содержать token в URL)
+        referer = request.headers.get("Referer", "")
+        if "token=" in referer:
+            start_idx = referer.find("token=") + 6
+            end_idx = referer.find("&", start_idx)
+            if end_idx == -1:
+                end_idx = len(referer)
+            
+            potential_token = referer[start_idx:end_idx]
+            if "eyJ" in potential_token and potential_token.count('.') >= 1:
+                jwt_token_global = potential_token
+                print(f"{COLOR_CYAN}🔥 JWT НАЙДЕН в Referer заголовке: {potential_token[:50]}...{COLOR_RESET}", flush=True)
+                return
+        
+        # Проверить тело запроса (если есть JSON с токеном)
+        try:
+            post_data = request.post_data
+            if post_data and "eyJ" in post_data:
+                # Попробовать найти JWT в JSON payload
+                start_idx = post_data.find("eyJ")
+                if start_idx != -1:
+                    end_idx = start_idx
+                    while end_idx < len(post_data) and (post_data[end_idx].isalnum() or post_data[end_idx] in '_-'):
+                        end_idx += 1
+                    
+                    potential_token = post_data[start_idx:end_idx]
+                    if potential_token.count('.') >= 1:
+                        jwt_token_global = potential_token
+                        print(f"{COLOR_CYAN}🔥 JWT НАЙДЕН в теле запроса: {potential_token[:50]}...{COLOR_RESET}", flush=True)
+        except:
+            pass
+    except Exception as e:
+        pass  # Игнорируем ошибки
+
+
+def _subscribe_jwt_search_to_page(page) -> None:
+    """
+    Подписать поиск JWT токена на события ответов и запросов страницы
+    """
+    page.on("response", _handle_response)
+    page.on("request", _handle_request)
 
 def _validate_base_bet(bet_amount: float) -> bool:
     """Проверить, делится ли ставка на 10 нацело"""
@@ -141,6 +273,8 @@ def _init_betting_state(strategy: dict) -> dict:
         "consecutive_losses": 0,
         "session_balance": 0.0,
         "last_bet_amount": 0.0,
+        "total_bet_amount": 0.0,
+        "total_profit": 0.0,
         "strategy": strategy
     }
 
@@ -249,17 +383,29 @@ def _save_target_ws_message(payload: object) -> None:
 
 async def _place_bet(page, outcome: str, specifier: str, amount: float) -> bool:
     """
-    Разместить ставку через API betboom
+    Разместить ставку через API betboom используя браузер (page.request)
+    
+    Преимущества использования браузера:
+    - Автоматически передаются все cookies и токены
+    - Используется правильный User-Agent
+    - Следует всем редиректам
+    - Избегает обнаружения как бот
     
     Args:
-        page: Объект страницы Playwright для доступа к cookies
-        outcome: "red" или "black"
+        page: Объект страницы Playwright
+        outcome: "red" или "yellow"
         specifier: значение кубика (1-6)
         amount: сумма ставки
         
     Returns:
         True если ставка успешна, False иначе
     """
+    # Проверить что JWT токен найден перед размещением ставки
+    global jwt_token_global
+    if not jwt_token_global:
+        print(f"[WARNING] JWT токен ещё не найден! Ставка НЕ будет размещена.", flush=True)
+        return False
+    
     # Валидировать, что ставка делится на 10 нацело
     if not _validate_base_bet(amount):
         print(f"[ERROR] Ставка {amount}р ДОЛЖНА делиться на 10 нацело! Ставка НЕ размещена.", flush=True)
@@ -270,64 +416,122 @@ async def _place_bet(page, outcome: str, specifier: str, amount: float) -> bool:
     await asyncio.sleep(delay)
     
     try:
-        # Получить cookies из браузера для аутентификации
-        cookies = await page.context.cookies()
-        cookie_dict = {c["name"]: c["value"] for c in cookies}
-        
         # Подготовить payload для ставки
+        # Проверить тип ставки (цвет или дубль)
+        if outcome == "double":
+            # Дубль ставка (любой дубль - когда оба кубика равны)
+            bet_payload = {
+                "market": "gtlt",
+                "outcome": "double",
+                "specifier": "",
+                "sum": amount,
+                "balance_type": "balance"
+            }
+            specifier = outcome
+        else:
+            # Цветная ставка
+            bet_payload = {
+                "market": "value",
+                "outcome": outcome,
+                "specifier": specifier,
+                "sum": amount,
+                "balance_type": "balance"
+            }
+        
         payload = {
-            "bets": [
-                {
-                    "market": "value",
-                    "outcome": outcome,
-                    "specifier": specifier,
-                    "sum": amount,
-                    "balance_type": "balance"
-                }
-            ]
+            "bets": [bet_payload]
         }
+        
+        # Отправить ставку через браузер (page.request)
+        # Это автоматически использует cookies и контекст браузера
         
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0"
+            "Referer": "https://betboom.ru/game/nardsgame",
+            "Origin": "https://betboom.ru",
+            "X-Requested-With": "XMLHttpRequest"
         }
         
-        # Отправить ставку
-        async with aiohttp.ClientSession(cookies=cookie_dict) as session:
-            async with session.post(BET_API_URL, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-                # Сохранить информацию о ставке в БД
-                try:
-                    conn = _get_db_connection()
-                    cursor = conn.cursor()
+        # Добавить JWT токен в заголовок если он найден
+        if jwt_token_global:
+            headers["X-Access-Token"] = jwt_token_global
+        
+        response = await page.request.post(
+            BET_API_URL,
+            data=json.dumps(payload),
+            headers=headers
+        )
+        
+        status_code = response.status
+        response_text = await response.text()
+        
+        # Если API вернул ошибку в теле ответа (code в JSON), переопределить status_code ДО логирования
+        try:
+            response_json = json.loads(response_text)
+            if isinstance(response_json, dict) and "code" in response_json:
+                status_code = response_json["code"]
+        except (json.JSONDecodeError, ValueError):
+            pass  # Если не JSON или ошибка парсинга, используем HTTP status_code
+        
+        # Логирование отправленного запроса и ответа (если BET_DEBUG_ENABLED)
+        if BET_DEBUG_ENABLED:
+            print(f"[DEBUG] ========== BET REQUEST ==========", flush=True)
+            print(f"[DEBUG] Page URL: {page.url}", flush=True)
+            print(f"[DEBUG] API URL: {BET_API_URL}", flush=True)
+            print(f"[DEBUG] Payload: {json.dumps(payload)}", flush=True)
+            print(f"[DEBUG] Headers sent: {json.dumps({k: v[:50] + '...' if len(str(v)) > 50 else v for k, v in headers.items()})}", flush=True)
+            print(f"[DEBUG] Response Status: {status_code}", flush=True)
+            print(f"[DEBUG] Response Body: {response_text}", flush=True)
+            print(f"[DEBUG] ==================================", flush=True)
+            
+            if status_code != 200:
+                print(f"[DEBUG] Статус: {status_code}", flush=True)
+                print(f"[DEBUG] Ответ: {response_text[:500]}", flush=True)
+                print(f"[DEBUG] Headers: {dict(response.headers)}", flush=True)
+        # Сохранить информацию о ставке в БД
+        try:
+            conn = _get_db_connection()
+            cursor = conn.cursor()
+            
+            if status_code == 200:
+                bet_status = "pending"
+                max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
+
+                payout_coeff = current_strategy.get("payout_coefficient", 5.7) if current_strategy else 5.7
+                potential_win = amount * payout_coeff
+                potential_margin = potential_win - amount
+                roi = _calculate_roi()
+                time_str = datetime.now().strftime("%H:%M:%S")
+
+                print(
+                    f"[{time_str}] [BET] [SET ✓] {outcome}={specifier} | "
+                    f"Ставка: {COLOR_YELLOW}{amount}р{COLOR_RESET} | "
+                    f"Шаг: {betting_state.get('current_step', 0)+1}/{max_steps} | "
+                    f"Профит: +{potential_margin:.0f}р | "
+                    f"ROI: {COLOR_CYAN}{roi:.2f}%{COLOR_RESET}",
+                    flush=True
+                )
+            else:
+                bet_status = "error"
+                time_str = datetime.now().strftime("%H:%M:%S")
+                print(f"{COLOR_RED}[{time_str}] [BET] [SET ✗] Ошибка {status_code}: {response_text[:200]}{COLOR_RESET}", flush=True)
+            
+            cursor.execute("""
+                INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (datetime.now(timezone.utc), outcome, specifier, amount, STRATEGY_NAME, betting_state.get('current_step', 0), bet_status))
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"[DB ERROR] Ошибка сохранения ставки: {e}", flush=True)
+        
+        return status_code == 200
                     
-                    status = "pending"
-                if resp.status == 200:
-                        status = "pending"  # Статус будет обновлен при получении результата
-                        max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
-                        print(f"[BET ✓] Ставка разм.: {outcome}={specifier}, сумма={amount}р (шаг {betting_state['current_step']+1}/{max_steps}, стратегия: {current_strategy.get('name', 'unknown')})", flush=True)
-                    else:
-                        status = "error"
-                        error_text = await resp.text()
-                        print(f"[BET ✗] Ошибка ({resp.status}): {error_text[:200]}", flush=True)
-                    
-                    cursor.execute("""
-                        INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """, (datetime.now(timezone.utc), outcome, specifier, amount, BETTING_STRATEGY, betting_state['current_step'], status))
-                    
-                    conn.commit()
-                    cursor.close()
-                    conn.close()
-                except Exception as e:
-                    print(f"[DB ERROR] Ошибка сохранения ставки: {e}", flush=True)
-                
-                return resp.status == 200
-                    
-    except asyncio.TimeoutError:
-        print(f"[BET ✗] Timeout при отправке ставки", flush=True)
-        return False
     except Exception as e:
-        print(f"[BET ✗] Ошибка при размещении ставки: {e}", flush=True)
+        time_str = datetime.now().strftime("%H:%M:%S")
+        print(f"{COLOR_RED}[{time_str}] [BET] [SET ✗] Ошибка при размещении ставки: {e}{COLOR_RESET}", flush=True)
         return False
 
 
@@ -335,13 +539,16 @@ def _wire_ws_logging(page) -> None:
     def on_websocket(ws) -> None:
         is_target = ws.url.startswith(TARGET_WS_URL)
         tag = "TARGET-WS" if is_target else "WS"
-        print(f"[{tag} OPEN] {ws.url}", flush=True)
+        if WS_LOG_ENABLED:
+            print(f"[{tag} OPEN] {ws.url}", flush=True)
 
         def on_sent(payload) -> None:
-            print(f"[{tag} >>] {_format_ws_payload(payload)}", flush=True)
+            if WS_LOG_ENABLED:
+                print(f"[{tag} >>] {_format_ws_payload(payload)}", flush=True)
 
         def on_received(payload) -> None:
-            print(f"[{tag} <<] {_format_ws_payload(payload)}", flush=True)
+            if WS_LOG_ENABLED:
+                print(f"[{tag} <<] {_format_ws_payload(payload)}", flush=True)
             if is_target:
                 # Сохранить результат раунда
                 _save_target_ws_message(payload)
@@ -351,13 +558,24 @@ def _wire_ws_logging(page) -> None:
                     asyncio.create_task(_process_betting_round(page, payload))
 
         def on_close(*_) -> None:
-            print(f"[{tag} CLOSE] {ws.url}", flush=True)
+            if WS_LOG_ENABLED:
+                print(f"[{tag} CLOSE] {ws.url}", flush=True)
 
         ws.on("framesent", on_sent)
         ws.on("framereceived", on_received)
         ws.on("close", on_close)
 
     page.on("websocket", on_websocket)
+
+
+def _calculate_roi() -> float:
+    total_bet = betting_state.get("total_bet_amount", 0)
+    total_profit = betting_state.get("total_profit", 0)
+
+    if total_bet == 0:
+        return 0.0
+    
+    return (total_profit / total_bet) * 100
 
 
 async def _process_betting_round(page, payload: object) -> None:
@@ -379,11 +597,30 @@ async def _process_betting_round(page, payload: object) -> None:
     
     # Извлечь результат кубика из раунда
     dice_results = results.get("dice", [])
+    
+    # Проверить тип ставки (цвет или дубль)
     matching_dice = None
-    for dice in dice_results:
-        if dice.get("color") == BET_MODE_OUTCOME:
-            matching_dice = dice
-            break
+    is_win = False
+    actual_dice_representation = None
+    
+    if BET_MODE_OUTCOME == "double":
+        # Ставка на любой дубль (когда оба кубика равны друг другу)
+        dice_values = [d.get("value") for d in dice_results]
+        # Дубль: оба кубика одного значения
+        is_double = len(dice_values) == 2 and dice_values[0] == dice_values[1]
+        actual_dice_value = dice_values[0] if is_double else None
+        actual_dice_representation = f"double({actual_dice_value})" if is_double else "no_double"
+        is_win = is_double
+    else:
+        # Ставка на цвет
+        for dice in dice_results:
+            if dice.get("color") == BET_MODE_OUTCOME:
+                matching_dice = dice
+                break
+        target_dice_value = int(BET_MODE_SPECIFIER)
+        actual_dice_value = matching_dice.get("value") if matching_dice else None
+        actual_dice_representation = f"{BET_MODE_OUTCOME}({actual_dice_value})" if actual_dice_value else f"no_{BET_MODE_OUTCOME}"
+        is_win = (actual_dice_value == target_dice_value)
     
     # Обновить результат предыдущей ставки (если была)
     if betting_state["last_bet_amount"] > 0:
@@ -392,29 +629,79 @@ async def _process_betting_round(page, payload: object) -> None:
             cursor = conn.cursor()
             
             # Проверить, выиграла ли предыдущая ставка
-            target_dice_value = int(BET_MODE_SPECIFIER)
-            actual_dice_value = matching_dice.get("value") if matching_dice else None
             
-            if actual_dice_value == target_dice_value:
+            
+            if is_win:
                 # Выигрыш
                 status = "win"
                 betting_state["consecutive_losses"] = 0
                 betting_state["current_step"] = 0
-                print(f"[RESULT ✓] Угадали! {BET_MODE_OUTCOME}={actual_dice_value}. Прогрессия сброшена.", flush=True)
+                payout_coeff = current_strategy.get("payout_coefficient", 5.7) if current_strategy else 5.7
+                bet_amount = betting_state['last_bet_amount']
+                winnings = bet_amount * payout_coeff
+                margin = winnings - bet_amount
+                betting_state["total_profit"] += margin
+                betting_state["session_balance"] += margin
+                roi = _calculate_roi()
+                time_str = datetime.now().strftime("%H:%M:%S")
+                print(
+                    f"{COLOR_GREEN}[{time_str}] [BET] [RESULT ✓] {actual_dice_representation} | "
+                    f"Ставка: {COLOR_YELLOW}{bet_amount}р{COLOR_GREEN} | "
+                    f"Выигрыш: {COLOR_YELLOW}{winnings:.0f}р{COLOR_GREEN} | "
+                    f"Профит: +{margin:.0f}р | "
+                    f"ROI: {COLOR_CYAN}{roi:.2f}%{COLOR_GREEN} | "
+                    f"Баланс: {COLOR_CYAN}{betting_state['session_balance']:.0f}р | "
+                    f"Прогрессия сброшена{COLOR_RESET}",
+                    flush=True
+                )
             else:
                 # Проигрыш
                 status = "loss"
-                betting_state["consecutive_losses"] += 1
                 max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
-                betting_state["current_step"] = min(betting_state["current_step"] + 1, max_steps - 1)
-                print(f"[RESULT ✗] Не угадали. {BET_MODE_OUTCOME}={actual_dice_value} (ставили на {target_dice_value}). Шаг {betting_state['current_step']+1}/{max_steps}", flush=True)
+                bet_amount = betting_state['last_bet_amount']
+                margin = -bet_amount
+                betting_state["total_profit"] += margin
+                betting_state["session_balance"] += margin
+                if betting_state["current_step"] + 1 == max_steps:
+                    betting_state["consecutive_losses"] = 0
+                    betting_state["current_step"] = 0
+                    roi = _calculate_roi()
+                    time_str = datetime.now().strftime("%H:%M:%S")
+
+                    print(
+                        f"{COLOR_RED}[{time_str}] [BET] [RESULT ✗] {actual_dice_representation} | "
+                        f"Ставка: {COLOR_YELLOW}{bet_amount}р{COLOR_RED} | "
+                        f"Профит: {margin:.0f}р | "
+                        f"ROI: {COLOR_CYAN}{roi:.2f}%{COLOR_RED} | "
+                        f"Баланс: {COLOR_CYAN}{betting_state['session_balance']:.0f}р | "
+                        f"Достигнут максимум шагов. Прогрессия сброшена{COLOR_RESET}",
+                        flush=True
+                    )
+                else:
+                    status = "loss"
+                    betting_state["consecutive_losses"] += 1
+                    betting_state["current_step"] = min(betting_state["current_step"] + 1, max_steps - 1)
+                    roi = _calculate_roi()
+                    time_str = datetime.now().strftime("%H:%M:%S")
+
+                    print(
+                        f"{COLOR_RED}[{time_str}] [BET] [RESULT ✗] {actual_dice_representation} | "
+                        f"Ставка: {COLOR_YELLOW}{bet_amount}р{COLOR_RED} | "
+                        f"Профит: {margin:.0f}р | "
+                        f"ROI: {COLOR_CYAN}{roi:.2f}%{COLOR_RED} | "
+                        f"Баланс: {COLOR_CYAN}{betting_state['session_balance']:.0f}р | "
+                        f"Шаг {betting_state['current_step']+1}/{max_steps}{COLOR_RESET}",
+                        flush=True
+                    )
             
             # Обновить последнюю ставку в БД
             cursor.execute("""
                 UPDATE bet_history 
                 SET status = %s, result_dice_color = %s, result_dice_value = %s
                 WHERE id = (SELECT MAX(id) FROM bet_history)
-            """, (status, matching_dice.get("color") if matching_dice else None, actual_dice_value))
+            """, (status, 
+                  matching_dice.get("color") if matching_dice else "double", 
+                  actual_dice_value))
             
             conn.commit()
             cursor.close()
@@ -529,9 +816,14 @@ async def main() -> None:
     try:
         for existing_page in context.pages:
             _wire_ws_logging(existing_page)
+            _subscribe_jwt_search_to_page(existing_page)
+        
         context.on("page", _wire_ws_logging)
+        context.on("page", _subscribe_jwt_search_to_page)
 
         page = context.pages[0] if context.pages else await context.new_page()
+        
+        print(f"[DEBUG] Поиск JWT токена в ответах...", flush=True)
         await page.goto("https://betboom.ru/game/nardsgame")
         
         status_line = "Браузер открыт. Профиль сессии: {}\n".format(SESSION_DIR)

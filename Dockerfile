@@ -8,6 +8,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
+    xauth \
     ca-certificates \
     fonts-liberation \
     libasound2 \
@@ -39,8 +40,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install -r requirements.txt && patchright install chromium
 
-COPY main.py analys.py import_export.py .
+COPY main.py analys.py import_export.py save_profile.py .
 COPY strategies/ ./strategies/
 RUN mkdir -p /app/profile
 
-CMD ["xvfb-run", "-a", "python", "-u", "main.py"]
+CMD ["python", "-u", "main.py"]

@@ -1,0 +1,5 @@
+name: "Labouchere Modified (Cancellation System)"
+description: "Последовательность чисел с вычеркиванием - сложная но эффективная система восстановления"
+coefficients: [1, 2, 1, 3, 1, 2, 1, 3, 1, 2, 1, 3, 2, 2, 2]
+payout_coefficient: 5.7
+reset_condition: "win"
