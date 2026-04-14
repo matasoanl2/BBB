@@ -5,3 +5,7 @@ PyYAML
 tabulate
 tqdm
 python-dotenv
+wcwidth
+fastapi
+uvicorn
+jinja2

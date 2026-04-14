@@ -40,7 +40,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install -r requirements.txt && patchright install chromium
 
-COPY main.py analys.py import_export.py save_profile.py .
+COPY *.py ./
+COPY dashboard_templates/ ./dashboard_templates/
 COPY strategies/ ./strategies/
 RUN mkdir -p /app/profile
 

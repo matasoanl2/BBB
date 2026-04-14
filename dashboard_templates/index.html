@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <style>
+        :root {
+            --bg: #f5efe4;
+            --paper: rgba(255, 251, 245, 0.88);
+            --paper-strong: #fffaf3;
+            --ink: #1f241d;
+            --muted: #667062;
+            --line: rgba(32, 39, 30, 0.12);
+            --green: #1f7a4d;
+            --green-soft: #d8efe1;
+            --red: #b64432;
+            --red-soft: #f4ddd7;
+            --amber: #bb7a22;
+            --amber-soft: #f4e5cb;
+            --blue: #2d6a8c;
+            --blue-soft: #d8e8f1;
+            --shadow: 0 18px 50px rgba(58, 47, 29, 0.12);
+            --radius: 22px;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(187, 122, 34, 0.16), transparent 24%),
+                radial-gradient(circle at top right, rgba(45, 106, 140, 0.12), transparent 22%),
+                linear-gradient(180deg, #f7f2e8 0%, #efe6d6 100%);
+            font-family: "Bahnschrift", "Trebuchet MS", sans-serif;
+        }
+
+        .shell {
+            width: min(1440px, calc(100% - 32px));
+            margin: 24px auto 48px;
+        }
+
+        .hero {
+            display: grid;
+            grid-template-columns: 1.3fr 0.9fr;
+            gap: 18px;
+            margin-bottom: 18px;
+        }
+
+        .panel {
+            background: var(--paper);
+            backdrop-filter: blur(18px);
+            border: 1px solid var(--line);
+            border-radius: var(--radius);
+            box-shadow: var(--shadow);
+        }
+
+        .hero-main {
+            padding: 26px 28px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-main::after {
+            content: "";
+            position: absolute;
+            inset: auto -120px -120px auto;
+            width: 280px;
+            height: 280px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(31, 122, 77, 0.16), transparent 70%);
+        }
+
+        .eyebrow {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 12px;
+            border-radius: 999px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-size: 12px;
+            color: var(--muted);
+            background: rgba(255, 255, 255, 0.65);
+            border: 1px solid var(--line);
+        }
+
+        h1 {
+            margin: 18px 0 10px;
+            font-size: clamp(34px, 4.2vw, 56px);
+            line-height: 0.95;
+            letter-spacing: -0.04em;
+            font-family: "Georgia", "Palatino Linotype", serif;
+        }
+
+        .hero-copy {
+            max-width: 780px;
+            color: var(--muted);
+            font-size: 15px;
+            line-height: 1.55;
+        }
+
+        .hero-meta {
+            display: flex;
+            gap: 12px;
+            margin-top: 18px;
+            flex-wrap: wrap;
+        }
+
+        .chip {
+            padding: 10px 14px;
+            border-radius: 14px;
+            border: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.66);
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        .hero-side {
+            padding: 20px;
+            display: grid;
+            gap: 12px;
+            align-content: start;
+        }
+
+        .status-box {
+            padding: 16px;
+            border-radius: 18px;
+            background: var(--paper-strong);
+            border: 1px solid var(--line);
+        }
+
+        .status-box label {
+            display: block;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted);
+            margin-bottom: 8px;
+        }
+
+        .status-box .value {
+            font-size: 26px;
+            font-weight: 700;
+        }
+
+        .grid-cards {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 14px;
+            margin-bottom: 18px;
+        }
+
+        .card {
+            padding: 18px;
+            min-height: 132px;
+        }
+
+        .card .label {
+            color: var(--muted);
+            font-size: 12px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 12px;
+        }
+
+        .card .metric {
+            font-size: 30px;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+        }
+
+        .card .sub {
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .card-green { background: linear-gradient(180deg, rgba(216,239,225,0.9), rgba(255,250,243,0.88)); }
+        .card-red { background: linear-gradient(180deg, rgba(244,221,215,0.92), rgba(255,250,243,0.88)); }
+        .card-blue { background: linear-gradient(180deg, rgba(216,232,241,0.9), rgba(255,250,243,0.88)); }
+        .card-amber { background: linear-gradient(180deg, rgba(244,229,203,0.92), rgba(255,250,243,0.88)); }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 18px;
+            margin-bottom: 18px;
+        }
+
+        .chart-panel, .table-panel, .rail-panel {
+            padding: 20px;
+        }
+
+        .section-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .section-title {
+            font-size: 21px;
+            letter-spacing: -0.03em;
+            font-weight: 700;
+        }
+
+        .section-note {
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .chart-shell {
+            position: relative;
+            height: 290px;
+            border-radius: 18px;
+            overflow: hidden;
+            border: 1px solid var(--line);
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.75), rgba(255,249,239,0.95)),
+                repeating-linear-gradient(
+                    to top,
+                    rgba(31,36,29,0.05) 0,
+                    rgba(31,36,29,0.05) 1px,
+                    transparent 1px,
+                    transparent 58px
+                );
+        }
+
+        .chart-shell svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+
+        .legend {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            margin-top: 12px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        .legend span::before {
+            content: "";
+            display: inline-block;
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            margin-right: 8px;
+            vertical-align: -1px;
+        }
+
+        .legend .session::before { background: var(--green); }
+        .legend .real::before { background: var(--blue); }
+        .legend .wins::before { background: var(--amber); }
+        .legend .losses::before { background: var(--red); }
+        .legend .net::before { background: #6e56cf; }
+        .legend .roll20::before { background: var(--green); }
+        .legend .roll50::before { background: var(--blue); }
+
+        .mini-metrics {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+            margin-top: 14px;
+        }
+
+        .mini-card {
+            padding: 14px 16px;
+            border-radius: 16px;
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.68);
+        }
+
+        .mini-card .label {
+            color: var(--muted);
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .mini-card .metric {
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+        }
+
+        .table-wrap {
+            overflow: auto;
+            border-radius: 16px;
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.65);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 640px;
+        }
+
+        th, td {
+            padding: 12px 14px;
+            text-align: left;
+            border-bottom: 1px solid rgba(31, 36, 29, 0.08);
+            font-size: 13px;
+        }
+
+        th {
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted);
+            background: rgba(255, 250, 243, 0.9);
+            position: sticky;
+            top: 0;
+        }
+
+        tbody tr:hover {
+            background: rgba(31, 122, 77, 0.05);
+        }
+
+        .status-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            font-weight: 700;
+        }
+
+        .status-pending, .status-win { background: var(--green-soft); color: var(--green); }
+        .status-loss, .status-error { background: var(--red-soft); color: var(--red); }
+        .status-skipped_insufficient_balance { background: var(--amber-soft); color: var(--amber); }
+
+        .mono {
+            font-family: "Consolas", "Lucida Console", monospace;
+            font-size: 12px;
+        }
+
+        .layout-bottom {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 18px;
+        }
+
+        .event-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .event-item {
+            display: grid;
+            grid-template-columns: 140px 1fr auto;
+            gap: 10px;
+            align-items: center;
+            padding: 12px 14px;
+            border-radius: 16px;
+            border: 1px solid var(--line);
+            background: rgba(255,255,255,0.66);
+        }
+
+        .event-type {
+            font-size: 11px;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--muted);
+        }
+
+        .event-main {
+            font-size: 14px;
+            font-weight: 700;
+        }
+
+        .event-extra {
+            font-size: 12px;
+            color: var(--muted);
+        }
+
+        .empty {
+            padding: 26px;
+            text-align: center;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        @media (max-width: 1180px) {
+            .grid-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .hero, .content-grid, .layout-bottom { grid-template-columns: 1fr; }
+            .mini-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
+        @media (max-width: 720px) {
+            .shell { width: min(100% - 20px, 1440px); }
+            .grid-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .event-item { grid-template-columns: 1fr; }
+            table { min-width: 560px; }
+            .mini-metrics { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <section class="hero">
+            <div class="panel hero-main">
+                <div class="eyebrow">BuyBayBye Control Room</div>
+                <h1>Живой дашборд ставок и раундов</h1>
+                <div class="hero-copy">
+                    Одна панель для рантайм-состояния, балансов, последних ставок, выпавших раундов и событий сессии. Экран обновляется автоматически и читает только PostgreSQL + runtime snapshot.
+                </div>
+                <div class="hero-meta">
+                    <div class="chip">URL: <span class="mono">/api/overview</span></div>
+                    <div class="chip">Обновление: каждые 5 секунд</div>
+                    <div class="chip">Источник: <span class="mono">runtime_snapshot</span> + history</div>
+                </div>
+            </div>
+            <div class="panel hero-side">
+                <div class="status-box">
+                    <label>Стратегия</label>
+                    <div class="value" id="strategyName">-</div>
+                </div>
+                <div class="status-box">
+                    <label>Текущая цель</label>
+                    <div class="value" id="currentTarget">-</div>
+                </div>
+                <div class="status-box">
+                    <label>Последнее обновление</label>
+                    <div class="value mono" id="updatedAt">-</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="grid-cards">
+            <div class="panel card card-green">
+                <div class="label">Session Balance</div>
+                <div class="metric" id="sessionBalance">0р</div>
+                <div class="sub">Текущий расчётный баланс сессии</div>
+            </div>
+            <div class="panel card card-blue">
+                <div class="label">Real Balance</div>
+                <div class="metric" id="realBalance">-</div>
+                <div class="sub">Баланс из accounting_ws</div>
+            </div>
+            <div class="panel card card-blue">
+                <div class="label">Шаг</div>
+                <div class="metric" id="stepLabel">-</div>
+                <div class="sub">Позиция внутри прогрессии</div>
+            </div>
+            <div class="panel card card-red">
+                <div class="label">Loss Streak</div>
+                <div class="metric" id="lossStreak">0</div>
+                <div class="sub">Подряд проигранных результатов</div>
+            </div>
+            <div class="panel card card-amber">
+                <div class="label">Withdrawals</div>
+                <div class="metric" id="withdrawalsTotal">0р</div>
+                <div class="sub">Сумма внешних выводов</div>
+            </div>
+        </section>
+
+        <section class="content-grid">
+            <div class="panel chart-panel">
+                <div class="section-head">
+                    <div>
+                        <div class="section-title">Кривая баланса</div>
+                        <div class="section-note">История из runtime_events: session и real balance</div>
+                    </div>
+                    <div class="section-note" id="chartMeta">0 точек</div>
+                </div>
+                <div class="chart-shell">
+                    <svg id="balanceChart" viewBox="0 0 800 290" preserveAspectRatio="none"></svg>
+                </div>
+                <div class="legend">
+                    <span class="session">Session balance</span>
+                    <span class="real">Real balance</span>
+                </div>
+            </div>
+
+            <div class="panel rail-panel">
+                <div class="section-head">
+                    <div>
+                        <div class="section-title">Состояние сессии</div>
+                        <div class="section-note">Снимок рантайма + сводка из БД</div>
+                    </div>
+                </div>
+                <div class="event-list" id="summaryRail"></div>
+            </div>
+        </section>
+
+        <section class="panel chart-panel" style="margin-bottom: 18px;">
+            <div class="section-head">
+                <div>
+                    <div class="section-title">Кривая побед и поражений</div>
+                    <div class="section-note">Кумулятивный ряд по resolved ставкам из bet_history</div>
+                </div>
+                <div class="section-note" id="resultChartMeta">0 точек</div>
+            </div>
+            <div class="chart-shell">
+                <svg id="resultsChart" viewBox="0 0 800 290" preserveAspectRatio="none"></svg>
+            </div>
+            <div class="legend">
+                <span class="wins">Победы</span>
+                <span class="losses">Поражения</span>
+            </div>
+            <div class="mini-metrics">
+                <div class="mini-card">
+                    <div class="label">Кумулятивно Wins / Losses</div>
+                    <div class="metric" id="resultTotals">-</div>
+                </div>
+                <div class="mini-card">
+                    <div class="label">Чистая кривая</div>
+                    <div class="metric" id="resultNetMetric">-</div>
+                </div>
+                <div class="mini-card">
+                    <div class="label">Rolling Winrate 20</div>
+                    <div class="metric" id="rolling20Metric">-</div>
+                </div>
+                <div class="mini-card">
+                    <div class="label">Rolling Winrate 50</div>
+                    <div class="metric" id="rolling50Metric">-</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="content-grid" style="margin-bottom: 18px;">
+            <div class="panel chart-panel">
+                <div class="section-head">
+                    <div>
+                        <div class="section-title">Чистая кривая Wins - Losses</div>
+                        <div class="section-note">Накопленная разница побед и поражений</div>
+                    </div>
+                    <div class="section-note" id="netChartMeta">0 точек</div>
+                </div>
+                <div class="chart-shell">
+                    <svg id="netChart" viewBox="0 0 800 290" preserveAspectRatio="none"></svg>
+                </div>
+                <div class="legend">
+                    <span class="net">Wins minus losses</span>
+                </div>
+            </div>
+
+            <div class="panel chart-panel">
+                <div class="section-head">
+                    <div>
+                        <div class="section-title">Rolling Winrate</div>
+                        <div class="section-note">Скользящий winrate по последним 20 и 50 resolved ставкам</div>
+                    </div>
+                    <div class="section-note" id="rollingChartMeta">0 точек</div>
+                </div>
+                <div class="chart-shell">
+                    <svg id="rollingChart" viewBox="0 0 800 290" preserveAspectRatio="none"></svg>
+                </div>
+                <div class="legend">
+                    <span class="roll20">Last 20</span>
+                    <span class="roll50">Last 50</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="layout-bottom">
+            <div class="panel table-panel">
+                <div class="section-head">
+                    <div>
+                        <div class="section-title">Последние ставки</div>
+                        <div class="section-note">История из bet_history</div>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Target</th>
+                                <th>Step</th>
+                                <th>Amount</th>
+                                <th>Status</th>
+                                <th>Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="betsBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="panel table-panel">
+                <div class="section-head">
+                    <div>
+                        <div class="section-title">Последние раунды</div>
+                        <div class="section-note">История из game_results</div>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Player</th>
+                                <th>Side</th>
+                                <th>Red</th>
+                                <th>Yellow</th>
+                                <th>Display</th>
+                            </tr>
+                        </thead>
+                        <tbody id="roundsBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel rail-panel" style="margin-top: 18px;">
+            <div class="section-head">
+                <div>
+                    <div class="section-title">Лента событий</div>
+                    <div class="section-note">Последние runtime events для отладки сессии</div>
+                </div>
+            </div>
+            <div class="event-list" id="eventsList"></div>
+        </section>
+    </div>
+
+    <script>
+        const fmtMoney = (value) => {
+            if (value === null || value === undefined || value === "") return "-";
+            const number = Number(value);
+            if (Number.isNaN(number)) return "-";
+            return `${Math.round(number)}р`;
+        };
+
+        const fmtNumber = (value) => {
+            if (value === null || value === undefined || value === "") return "-";
+            const number = Number(value);
+            if (Number.isNaN(number)) return "-";
+            return `${number.toFixed(1)}%`;
+        };
+
+        const fmtDateTime = (value) => {
+            if (!value) return "-";
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return value;
+            return date.toLocaleString("ru-RU");
+        };
+
+        const fmtShortTime = (value) => {
+            if (!value) return "-";
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return value;
+            return date.toLocaleTimeString("ru-RU");
+        };
+
+        const statusClass = (status) => `status-pill status-${String(status || "").replace(/[^a-z_]/gi, "_").toLowerCase()}`;
+
+        function setText(id, value) {
+            const node = document.getElementById(id);
+            if (node) node.textContent = value;
+        }
+
+        function renderSummary(snapshot, summary) {
+            setText("strategyName", snapshot.strategy_display_name || "Нет активной стратегии");
+            setText("currentTarget", snapshot.current_outcome ? `${String(snapshot.current_outcome).toUpperCase()} ${snapshot.current_specifier || ""}`.trim() : "-");
+            setText("updatedAt", fmtDateTime(snapshot.updated_at));
+            setText("sessionBalance", fmtMoney(summary.session_balance));
+            setText("realBalance", fmtMoney(summary.account_balance));
+            setText("stepLabel", summary.step_label || "-");
+            setText("lossStreak", String(summary.consecutive_losses || 0));
+            setText("withdrawalsTotal", fmtMoney(summary.withdrawals_total));
+
+            const rail = document.getElementById("summaryRail");
+            rail.innerHTML = "";
+            const rows = [
+                ["Ставок в текущей сессии", summary.session_total_bets],
+                ["Всего ставок в БД", summary.all_time_bets],
+                ["Всего раундов в БД", summary.all_time_rounds],
+                ["Победы / проигрыши", `${summary.wins} / ${summary.losses}`],
+                ["Win rate", fmtNumber(summary.win_rate)],
+                ["Последний round result", snapshot.last_round_result || "-"],
+                ["Последний SET status", snapshot.last_set_status || "-"],
+                ["Последний SET error", snapshot.last_set_error || "-"],
+            ];
+
+            rows.forEach(([label, value]) => {
+                const item = document.createElement("div");
+                item.className = "event-item";
+                item.innerHTML = `
+                    <div class="event-type">${label}</div>
+                    <div class="event-main">${value ?? "-"}</div>
+                    <div class="event-extra"></div>
+                `;
+                rail.appendChild(item);
+            });
+        }
+
+        function renderBets(bets) {
+            const body = document.getElementById("betsBody");
+            if (!bets.length) {
+                body.innerHTML = `<tr><td colspan="6" class="empty">Пока нет ставок</td></tr>`;
+                return;
+            }
+
+            body.innerHTML = bets.map((bet) => `
+                <tr>
+                    <td class="mono">${fmtShortTime(bet.timestamp)}</td>
+                    <td>${bet.target || "-"}</td>
+                    <td>${bet.step || "-"}</td>
+                    <td>${fmtMoney(bet.amount)}</td>
+                    <td><span class="${statusClass(bet.status)}">${bet.status || "-"}</span></td>
+                    <td>${bet.result || "-"}</td>
+                </tr>
+            `).join("");
+        }
+
+        function renderRounds(rounds) {
+            const body = document.getElementById("roundsBody");
+            if (!rounds.length) {
+                body.innerHTML = `<tr><td colspan="6" class="empty">Пока нет раундов</td></tr>`;
+                return;
+            }
+
+            body.innerHTML = rounds.map((round) => `
+                <tr>
+                    <td class="mono">${fmtShortTime(round.timestamp)}</td>
+                    <td>${round.player_name || "unknown"}</td>
+                    <td>${round.position || "-"}</td>
+                    <td>${round.red_value ?? "-"}</td>
+                    <td>${round.yellow_value ?? "-"}</td>
+                    <td>${round.display}</td>
+                </tr>
+            `).join("");
+        }
+
+        function renderEvents(events) {
+            const list = document.getElementById("eventsList");
+            if (!events.length) {
+                list.innerHTML = `<div class="empty">Пока нет runtime событий</div>`;
+                return;
+            }
+
+            list.innerHTML = events.map((event) => `
+                <div class="event-item">
+                    <div>
+                        <div class="event-type">${event.event_type || "event"}</div>
+                        <div class="event-extra mono">${fmtDateTime(event.timestamp)}</div>
+                    </div>
+                    <div>
+                        <div class="event-main">round=${event.last_round_result || "-"}</div>
+                        <div class="event-extra">set=${event.last_set_status || "-"}</div>
+                    </div>
+                    <div class="event-extra mono">session=${fmtMoney(event.session_balance)} / real=${fmtMoney(event.account_balance)}</div>
+                </div>
+            `).join("");
+        }
+
+        function makePath(points, width, height, minValue, maxValue) {
+            if (!points.length) return "";
+            const span = Math.max(maxValue - minValue, 1);
+            return points.map((point, index) => {
+                const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
+                const y = height - ((point - minValue) / span) * height;
+                return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
+            }).join(" ");
+        }
+
+        function renderChart(series) {
+            const svg = document.getElementById("balanceChart");
+            if (!series.length) {
+                svg.innerHTML = "<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#667062' font-size='16'>Пока нет данных runtime_events</text>";
+                setText("chartMeta", "0 точек");
+                return;
+            }
+
+            const width = 800;
+            const height = 290;
+            const session = series.filter((item) => item.session_balance !== null).map((item) => Number(item.session_balance));
+            const real = series.filter((item) => item.account_balance !== null).map((item) => Number(item.account_balance));
+            const all = session.concat(real);
+            const minValue = Math.min(...all);
+            const maxValue = Math.max(...all);
+            const sessionPath = makePath(session, width, height, minValue, maxValue);
+            const realPath = makePath(real, width, height, minValue, maxValue);
+
+            svg.innerHTML = `
+                <path d="${sessionPath}" fill="none" stroke="#1f7a4d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+                <path d="${realPath}" fill="none" stroke="#2d6a8c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+            `;
+            setText("chartMeta", `${series.length} точек`);
+        }
+
+        function renderResultsChart(series) {
+            const svg = document.getElementById("resultsChart");
+            if (!series.length) {
+                svg.innerHTML = "<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#667062' font-size='16'>Пока нет завершённых ставок</text>";
+                setText("resultChartMeta", "0 точек");
+                setText("resultTotals", "-");
+                setText("resultNetMetric", "-");
+                setText("rolling20Metric", "-");
+                setText("rolling50Metric", "-");
+                return;
+            }
+
+            const width = 800;
+            const height = 290;
+            const wins = series.map((item) => Number(item.wins ?? 0));
+            const losses = series.map((item) => Number(item.losses ?? 0));
+            const all = wins.concat(losses);
+            const minValue = Math.min(...all);
+            const maxValue = Math.max(...all);
+            const winsPath = makePath(wins, width, height, minValue, maxValue);
+            const lossesPath = makePath(losses, width, height, minValue, maxValue);
+
+            svg.innerHTML = `
+                <path d="${winsPath}" fill="none" stroke="#bb7a22" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+                <path d="${lossesPath}" fill="none" stroke="#b64432" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+            `;
+            setText("resultChartMeta", `${series.length} точек`);
+
+            const lastPoint = series[series.length - 1];
+            setText("resultTotals", `${lastPoint.wins} / ${lastPoint.losses}`);
+            setText("resultNetMetric", String(lastPoint.net ?? 0));
+            setText("rolling20Metric", fmtNumber(lastPoint.rolling20));
+            setText("rolling50Metric", fmtNumber(lastPoint.rolling50));
+        }
+
+        function renderNetChart(series) {
+            const svg = document.getElementById("netChart");
+            if (!series.length) {
+                svg.innerHTML = "<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#667062' font-size='16'>Пока нет завершённых ставок</text>";
+                setText("netChartMeta", "0 точек");
+                return;
+            }
+
+            const width = 800;
+            const height = 290;
+            const net = series.map((item) => Number(item.net ?? 0));
+            const minValue = Math.min(...net);
+            const maxValue = Math.max(...net);
+            const netPath = makePath(net, width, height, minValue, maxValue);
+
+            svg.innerHTML = `
+                <path d="${netPath}" fill="none" stroke="#6e56cf" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+            `;
+            setText("netChartMeta", `${series.length} точек`);
+        }
+
+        function renderRollingChart(series) {
+            const svg = document.getElementById("rollingChart");
+            if (!series.length) {
+                svg.innerHTML = "<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#667062' font-size='16'>Пока нет завершённых ставок</text>";
+                setText("rollingChartMeta", "0 точек");
+                return;
+            }
+
+            const width = 800;
+            const height = 290;
+            const rolling20 = series.map((item) => Number(item.rolling20 ?? 0));
+            const rolling50 = series.map((item) => Number(item.rolling50 ?? 0));
+            const all = rolling20.concat(rolling50);
+            const minValue = Math.min(...all);
+            const maxValue = Math.max(...all);
+            const rolling20Path = makePath(rolling20, width, height, minValue, maxValue);
+            const rolling50Path = makePath(rolling50, width, height, minValue, maxValue);
+
+            svg.innerHTML = `
+                <path d="${rolling20Path}" fill="none" stroke="#1f7a4d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+                <path d="${rolling50Path}" fill="none" stroke="#2d6a8c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+            `;
+            setText("rollingChartMeta", `${series.length} точек`);
+        }
+
+        async function refresh() {
+            const response = await fetch("/api/overview", { cache: "no-store" });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            renderSummary(data.snapshot, data.summary);
+            renderBets(data.recent_bets || []);
+            renderRounds(data.recent_rounds || []);
+            renderEvents(data.recent_events || []);
+            renderChart(data.balance_series || []);
+            renderResultsChart(data.result_curve || []);
+            renderNetChart(data.result_curve || []);
+            renderRollingChart(data.result_curve || []);
+        }
+
+        async function boot() {
+            try {
+                await refresh();
+            } catch (error) {
+                console.error(error);
+            }
+            window.setInterval(async () => {
+                try {
+                    await refresh();
+                } catch (error) {
+                    console.error(error);
+                }
+            }, 5000);
+        }
+
+        boot();
+    </script>
+</body>
+</html>

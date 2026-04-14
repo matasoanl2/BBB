@@ -24,30 +24,32 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
-      HEADLESS: "true"
       PYTHONUNBUFFERED: "1"
-      DB_USER: postgres
-      DB_PASSWORD: postgres
       DB_HOST: postgres
-      DB_PORT: "5432"
-      DB_NAME: buybaybye
-      
-      # Режим ставок (включить: "true", отключить: "false")
-      BET_MODE: "false"
-      BET_OUTCOME: "red"                    # red или black
-      BET_SPECIFIER: "5"                    # значение кубика (1-6)
-      
-      # Выбор стратегии из папки strategies/ (см. strategies/*.yaml)
-      STRATEGY: "martingale_classic"        # Доступные: martingale_classic, fibonacci_aggressive, flat_betting, dalambert, exponential, balanced, ultra_aggressive, conservative_stepped, cycle_recovery, doubling_cycle
-      BASE_BET: "10"                        # базовая ставка (должна делиться на 10 нацело)
-      
-      # Случайная задержка перед ставкой (в секундах) - для "человеческого" поведения
-      BET_DELAY_MIN: "0.8"
-      BET_DELAY_MAX: "1.5"
+      HEADLESS: "true"
     volumes:
       - ./profile:/app/profile
       - ./strategies:/app/strategies:ro
     shm_size: "1gb"
     stdin_open: true
     tty: true
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bb-dashboard
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DB_HOST: postgres
+    command: ["uvicorn", "dashboard:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
