@@ -222,7 +222,7 @@ async def monitor_accounting_ws_health(
 ) -> None:
     betting_state = runtime_context.betting_state
     while True:
-        await asyncio.sleep(3.0)
+        await asyncio.sleep(runtime_config.accounting.monitor_poll_seconds)
 
         if page.is_closed():
             return

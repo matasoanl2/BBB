@@ -56,6 +56,7 @@ class AccountingConfig:
     balance_stale_seconds: float
     recovery_reload_seconds: float
     recovery_cooldown_seconds: float
+    monitor_poll_seconds: float
     debug_rejected_messages: bool
 
 
@@ -153,6 +154,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             balance_stale_seconds=float(os.getenv("ACCOUNTING_BALANCE_STALE_SECONDS", "15")),
             recovery_reload_seconds=float(os.getenv("ACCOUNTING_RECOVERY_RELOAD_SECONDS", "25")),
             recovery_cooldown_seconds=float(os.getenv("ACCOUNTING_RECOVERY_COOLDOWN_SECONDS", "30")),
+            monitor_poll_seconds=float(os.getenv("ACCOUNTING_MONITOR_POLL_SECONDS", "3")),
             debug_rejected_messages=_env_bool("ACCOUNTING_DEBUG_REJECTED_MESSAGES"),
         ),
         telegram=TelegramConfig(
