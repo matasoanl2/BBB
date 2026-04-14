@@ -119,7 +119,7 @@ def update_balance_from_accounting_payload(
     if isinstance(previous_balance, (int, float)) and new_balance < previous_balance:
         actual_drop = float(previous_balance) - new_balance
         covered_by_bet = min(actual_drop, pending_expected_bet_drop)
-        pending_expected_bet_drop -= covered_by_bet
+        pending_expected_bet_drop = max(0.0, pending_expected_bet_drop - covered_by_bet)
         withdrawal_amount = actual_drop - covered_by_bet
 
         if withdrawal_amount > 0.009:

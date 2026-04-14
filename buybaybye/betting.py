@@ -329,7 +329,7 @@ async def place_bet(
                 bet_status = "pending"
                 betting_state["total_bet_amount"] += amount
                 betting_state["total_bets_placed"] += 1
-                betting_state["pending_expected_bet_drop"] = amount
+                betting_state["pending_expected_bet_drop"] = float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0) + amount
                 betting_state["last_set_amount"] = amount
                 betting_state["last_set_status"] = "pending"
                 betting_state["last_set_error"] = None
