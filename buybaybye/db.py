@@ -5,15 +5,17 @@ from datetime import datetime, timezone
 import psycopg2
 from psycopg2.extras import Json
 
+from buybaybye.runtime_config import DatabaseConfig
 
-def get_db_connection(*, user: str, password: str, host: str, port: str, database: str):
+
+def get_db_connection(*, database_config: DatabaseConfig):
     """Получить подключение к PostgreSQL с автоматическим созданием таблиц."""
     conn = psycopg2.connect(
-        user=user,
-        password=password,
-        host=host,
-        port=port,
-        database=database,
+        user=database_config.user,
+        password=database_config.password,
+        host=database_config.host,
+        port=database_config.port,
+        database=database_config.name,
     )
 
     cursor = conn.cursor()

@@ -1,20 +1,21 @@
 from __future__ import annotations
 
+from buybaybye.runtime_context import RuntimeContext
+from buybaybye.runtime_config import RuntimeConfig
+
 
 def print_session_stats(
     *,
-    betting_state: dict,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     checkpoint: int,
     calculate_roi_func,
-    color_cyan: str,
-    color_magenta: str,
-    color_yellow: str,
-    color_green: str,
-    color_red: str,
-    color_reset: str,
 ) -> None:
+    betting_state = runtime_context.betting_state
     if not betting_state:
         return
+
+    colors = runtime_config.colors
 
     total_bets = betting_state.get("total_bets_placed", 0)
     total_profit = betting_state.get("total_profit", 0)
@@ -22,30 +23,28 @@ def print_session_stats(
 
     header = "📊 СТАТИСТИКА СЕССИИ" + (f" (ставка {checkpoint})" if checkpoint > 0 else " (ИТОГОВАЯ)")
     print("\n" + "=" * 60, flush=True)
-    print(f"{color_cyan}{header}{color_reset}", flush=True)
+    print(f"{colors.cyan}{header}{colors.reset}", flush=True)
     print("=" * 60, flush=True)
-    print(f"  Ставок совершено: {color_magenta}{total_bets}{color_reset}", flush=True)
-    print(f"  Общая сумма ставок: {color_yellow}{betting_state.get('total_bet_amount', 0):.0f}р{color_reset}", flush=True)
-    profit_color = color_green if total_profit >= 0 else color_red
-    print(f"  Общий профит: {profit_color}{total_profit:.0f}р{color_reset}", flush=True)
-    roi_color = color_green if roi >= 0 else color_red
-    print(f"  ROI: {roi_color}{roi:.2f}%{color_reset}", flush=True)
+    print(f"  Ставок совершено: {colors.magenta}{total_bets}{colors.reset}", flush=True)
+    print(f"  Общая сумма ставок: {colors.yellow}{betting_state.get('total_bet_amount', 0):.0f}р{colors.reset}", flush=True)
+    profit_color = colors.green if total_profit >= 0 else colors.red
+    print(f"  Общий профит: {profit_color}{total_profit:.0f}р{colors.reset}", flush=True)
+    roi_color = colors.green if roi >= 0 else colors.red
+    print(f"  ROI: {roi_color}{roi:.2f}%{colors.reset}", flush=True)
     print("=" * 60 + "\n", flush=True)
 
 
 def print_dice_stats_20(
     *,
-    betting_state: dict,
-    color_cyan: str,
-    color_magenta: str,
-    color_red: str,
-    color_yellow: str,
-    color_green: str,
-    color_reset: str,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     format_combo_pretty_func,
 ) -> None:
+    betting_state = runtime_context.betting_state
     if not betting_state:
         return
+
+    colors = runtime_config.colors
 
     total_bets = betting_state.get("total_bets_placed", 0)
     if total_bets % 20 != 0 or total_bets == 0:
@@ -61,41 +60,41 @@ def print_dice_stats_20(
     most_common_combos = [key for key, value in combo_stats.items() if value == max_count] if max_count > 0 else []
 
     print("\n" + "=" * 80, flush=True)
-    print(f"{color_cyan}🎲 СТАТИСТИКА КОМБИНАЦИЙ ЦВЕТ+ЗНАЧЕНИЕ (всего ходов: {total_bets}) — НАРАСТАЮЩИЙ ИТОГ{color_reset}", flush=True)
+    print(f"{colors.cyan}🎲 СТАТИСТИКА КОМБИНАЦИЙ ЦВЕТ+ЗНАЧЕНИЕ (всего ходов: {total_bets}) — НАРАСТАЮЩИЙ ИТОГ{colors.reset}", flush=True)
     print("=" * 80, flush=True)
-    print(f"\n{color_magenta}📊 КОМБИНАЦИИ (цвет_значение):{color_reset}", flush=True)
+    print(f"\n{colors.magenta}📊 КОМБИНАЦИИ (цвет_значение):{colors.reset}", flush=True)
     print("-" * 80, flush=True)
 
-    print(f"{color_red}🔴 RED:{color_reset}", flush=True)
+    print(f"{colors.red}🔴 RED:{colors.reset}", flush=True)
     for value in range(1, 7):
         combo_key = f"red_{value}"
         count = combo_stats.get(combo_key, 0)
         percentage = (count / total_bets) * 100 if total_bets > 0 else 0
         if combo_key in most_common_combos:
             marker = " ← НАИБОЛЕЕ ЧАСТОЕ"
-            color = color_green
+            color = colors.green
         else:
             marker = ""
-            color = color_reset
+            color = colors.reset
         pretty_combo = format_combo_pretty_func(combo_key)
-        print(f"  {color}{pretty_combo:8} {count:3d} ({percentage:5.1f}%){color_reset}{marker}", flush=True)
+        print(f"  {color}{pretty_combo:8} {count:3d} ({percentage:5.1f}%){colors.reset}{marker}", flush=True)
 
-    print(f"\n{color_yellow}🟡 YELLOW:{color_reset}", flush=True)
+    print(f"\n{colors.yellow}🟡 YELLOW:{colors.reset}", flush=True)
     for value in range(1, 7):
         combo_key = f"yellow_{value}"
         count = combo_stats.get(combo_key, 0)
         percentage = (count / total_bets) * 100 if total_bets > 0 else 0
         if combo_key in most_common_combos:
             marker = " ← НАИБОЛЕЕ ЧАСТОЕ"
-            color = color_green
+            color = colors.green
         else:
             marker = ""
-            color = color_reset
+            color = colors.reset
         pretty_combo = format_combo_pretty_func(combo_key)
-        print(f"  {color}{pretty_combo:8} {count:3d} ({percentage:5.1f}%){color_reset}{marker}", flush=True)
+        print(f"  {color}{pretty_combo:8} {count:3d} ({percentage:5.1f}%){colors.reset}{marker}", flush=True)
 
     print("\n" + "-" * 80, flush=True)
-    print(f"{color_cyan}📈 ИТОГО ЗА СЕССИЮ:{color_reset}", flush=True)
+    print(f"{colors.cyan}📈 ИТОГО ЗА СЕССИЮ:{colors.reset}", flush=True)
 
     total_doubles = double_stats.get("doubles", 0)
     total_no_doubles = double_stats.get("no_doubles", 0)
@@ -103,7 +102,7 @@ def print_dice_stats_20(
     if total_rounds > 0:
         doubles_pct = (total_doubles / total_rounds) * 100
         no_doubles_pct = (total_no_doubles / total_rounds) * 100
-        print(f"\n{color_yellow}🔱 ДУБЛИ:{color_reset}", flush=True)
+        print(f"\n{colors.yellow}🔱 ДУБЛИ:{colors.reset}", flush=True)
         print(f"  ✓ Дубли:      {total_doubles:3d} раз ({doubles_pct:5.1f}%)", flush=True)
         print(f"  ✗ Не дубли:    {total_no_doubles:3d} раз ({no_doubles_pct:5.1f}%)", flush=True)
 

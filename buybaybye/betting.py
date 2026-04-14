@@ -5,6 +5,9 @@ import json
 import random
 from datetime import datetime, timezone
 
+from buybaybye.runtime_context import RuntimeContext
+from buybaybye.runtime_config import RuntimeConfig
+
 
 def format_bet_log(
     *,
@@ -104,16 +107,16 @@ def format_bet_log(
     return log_line
 
 
-def calculate_bet_amount(*, base_bet: float, betting_state: dict, current_strategy: dict | None) -> float:
-    if not current_strategy or not betting_state:
+def calculate_bet_amount(*, base_bet: float, runtime_context: RuntimeContext) -> float:
+    if not runtime_context.current_strategy or not runtime_context.betting_state:
         return base_bet
 
-    current_step = betting_state.get("current_step", 0)
-    coefficients = current_strategy.get("coefficients", [1])
+    current_step = runtime_context.betting_state.get("current_step", 0)
+    coefficients = runtime_context.current_strategy.get("coefficients", [1])
     step_index = min(current_step, len(coefficients) - 1)
     coefficient = coefficients[step_index]
     amount = base_bet * coefficient
-    betting_state["last_bet_amount"] = amount
+    runtime_context.betting_state["last_bet_amount"] = amount
     return amount
 
 
@@ -124,17 +127,9 @@ async def place_bet(
     amount: float,
     *,
     allow_refresh_retry: bool = True,
-    betting_state: dict,
-    current_strategy: dict | None,
-    strategy_name: str,
-    bet_api_url: str,
-    jwt_token: str | None,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     get_jwt_token_func,
-    bet_delay_min: float,
-    bet_delay_max: float,
-    bet_debug_enabled: bool,
-    telegram_notify_bet_errors: bool,
-    telegram_notify_auth_issues: bool,
     validate_base_bet_func,
     calculate_roi_func,
     format_outcome_pretty_func,
@@ -147,6 +142,11 @@ async def place_bet(
     update_runtime_snapshot_func,
     queue_telegram_notification_func,
 ) -> bool:
+    betting_state = runtime_context.betting_state
+    current_strategy = runtime_context.current_strategy
+    jwt_token = runtime_context.jwt_token
+    betting_config = runtime_config.betting
+    telegram_config = runtime_config.telegram
     requested_specifier = specifier
 
     if not jwt_token:
@@ -154,7 +154,7 @@ async def place_bet(
         advance_step_after_set_error_func()
         return False
 
-    if bet_debug_enabled:
+    if betting_config.debug_enabled:
         print(f"[DEBUG PLACE_BET] outcome={outcome}, specifier={specifier}, amount={amount}", flush=True)
 
     if not validate_base_bet_func(amount):
@@ -167,7 +167,7 @@ async def place_bet(
         max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
         available_balance = betting_state.get("account_balance")
         if available_balance is None:
-            if bet_debug_enabled and betting_state.get("total_bets_placed", 0) == 0:
+            if betting_config.debug_enabled and betting_state.get("total_bets_placed", 0) == 0:
                 print("[SET-CHECK] Баланс из accounting_ws пока неизвестен, первую ставку пропускаем без проверки лимита.", flush=True)
         else:
             try:
@@ -204,7 +204,7 @@ async def place_bet(
                     INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
-                    (datetime.now(timezone.utc), outcome, specifier, amount, strategy_name, step_for_history, "skipped_insufficient_balance"),
+                    (datetime.now(timezone.utc), outcome, specifier, amount, betting_config.strategy_name, step_for_history, "skipped_insufficient_balance"),
                 )
                 conn.commit()
                 cursor.close()
@@ -213,7 +213,7 @@ async def place_bet(
                 print(f"[DB ERROR] Ошибка сохранения пропущенной ставки: {db_err}", flush=True)
 
             old_step, max_steps, restarted = advance_step_after_set_error_func()
-            if bet_debug_enabled:
+            if betting_config.debug_enabled:
                 new_step = betting_state.get("current_step", 0)
                 restart_note = " [♻️ RESTART]" if restarted else ""
                 print(f"[SET-SKIP] Шаг сдвинут: {old_step+1}/{max_steps} -> {new_step+1}/{max_steps}{restart_note}", flush=True)
@@ -247,7 +247,7 @@ async def place_bet(
         )
         print(log_line, flush=True)
         old_step, max_steps, restarted = advance_step_after_set_error_func()
-        if bet_debug_enabled:
+        if betting_config.debug_enabled:
             new_step = betting_state.get("current_step", 0)
             restart_note = " [♻️ RESTART]" if restarted else ""
             print(f"[SET-ERROR] Шаг сдвинут: {old_step+1}/{max_steps} -> {new_step+1}/{max_steps}{restart_note}", flush=True)
@@ -260,7 +260,7 @@ async def place_bet(
         )
         return False
 
-    delay = random.uniform(bet_delay_min, bet_delay_max)
+    delay = random.uniform(betting_config.bet_delay_min, betting_config.bet_delay_max)
     await asyncio.sleep(delay)
 
     try:
@@ -295,7 +295,7 @@ async def place_bet(
         if jwt_token:
             headers["X-Access-Token"] = jwt_token
 
-        response = await page.request.post(bet_api_url, data=json.dumps(payload), headers=headers)
+        response = await page.request.post(runtime_config.browser.bet_api_url, data=json.dumps(payload), headers=headers)
         status_code = response.status
         response_text = await response.text()
 
@@ -306,10 +306,10 @@ async def place_bet(
         except (json.JSONDecodeError, ValueError):
             pass
 
-        if bet_debug_enabled:
+        if betting_config.debug_enabled:
             print("[DEBUG] ========== BET REQUEST ==========>", flush=True)
             print(f"[DEBUG] Page URL: {page.url}", flush=True)
-            print(f"[DEBUG] API URL: {bet_api_url}", flush=True)
+            print(f"[DEBUG] API URL: {runtime_config.browser.bet_api_url}", flush=True)
             print(f"[DEBUG] Payload: {json.dumps(payload)}", flush=True)
             print(f"[DEBUG] Headers sent: {json.dumps({k: v[:50] + '...' if len(str(v)) > 50 else v for k, v in headers.items()})}", flush=True)
             print(f"[DEBUG] Response Status: {status_code}", flush=True)
@@ -374,23 +374,16 @@ async def place_bet(
                         cursor.close()
                         conn.close()
                         print("[AUTH] Повторяем ставку один раз после обновления токена.", flush=True)
+                        runtime_context.jwt_token = get_jwt_token_func()
                         return await place_bet(
                             page,
                             outcome,
                             requested_specifier,
                             amount,
                             allow_refresh_retry=False,
-                            betting_state=betting_state,
-                            current_strategy=current_strategy,
-                            strategy_name=strategy_name,
-                            bet_api_url=bet_api_url,
-                            jwt_token=get_jwt_token_func(),
+                            runtime_context=runtime_context,
+                            runtime_config=runtime_config,
                             get_jwt_token_func=get_jwt_token_func,
-                            bet_delay_min=bet_delay_min,
-                            bet_delay_max=bet_delay_max,
-                            bet_debug_enabled=bet_debug_enabled,
-                            telegram_notify_bet_errors=telegram_notify_bet_errors,
-                            telegram_notify_auth_issues=telegram_notify_auth_issues,
                             validate_base_bet_func=validate_base_bet_func,
                             calculate_roi_func=calculate_roi_func,
                             format_outcome_pretty_func=format_outcome_pretty_func,
@@ -407,7 +400,7 @@ async def place_bet(
                         "[BuyBayBye] Ошибка авторизации ставки",
                         f"403 FORBIDDEN, обновление JWT не помогло.\nСтавка: {format_outcome_pretty_func(outcome, requested_specifier)}\nСумма: {amount:.0f}р",
                         dedup_key="auth_refresh_failed",
-                        enabled=telegram_notify_auth_issues,
+                        enabled=telegram_config.notify_auth_issues,
                     )
 
                 roi = calculate_roi_func()
@@ -427,7 +420,7 @@ async def place_bet(
                 )
                 print(log_line, flush=True)
                 old_step, max_steps, restarted = advance_step_after_set_error_func()
-                if bet_debug_enabled:
+                if betting_config.debug_enabled:
                     new_step = betting_state.get("current_step", 0)
                     restart_note = " [♻️ RESTART]" if restarted else ""
                     print(f"[SET-ERROR] Шаг сдвинут: {old_step+1}/{max_steps} -> {new_step+1}/{max_steps}{restart_note}", flush=True)
@@ -450,7 +443,7 @@ async def place_bet(
                 INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                (datetime.now(timezone.utc), outcome, specifier, amount, strategy_name, step_for_history, bet_status),
+                (datetime.now(timezone.utc), outcome, specifier, amount, betting_config.strategy_name, step_for_history, bet_status),
             )
             conn.commit()
             cursor.close()
@@ -477,7 +470,7 @@ async def place_bet(
                 "[BuyBayBye] Ошибка сохранения ставки",
                 f"Не удалось записать ставку в БД.\nСтавка: {format_outcome_pretty_func(outcome, specifier)}\nСумма: {amount:.0f}р\nОшибка: {str(exc)[:300]}",
                 dedup_key="bet_db_error",
-                enabled=telegram_notify_bet_errors,
+                enabled=telegram_config.notify_bet_errors,
             )
             update_runtime_snapshot_func(
                 "bet_db_error",
@@ -512,10 +505,10 @@ async def place_bet(
             "[BuyBayBye] Ошибка запроса ставки",
             f"Запрос на размещение ставки завершился ошибкой.\nСтавка: {format_outcome_pretty_func(outcome, requested_specifier)}\nСумма: {amount:.0f}р\nОшибка: {str(exc)[:300]}",
             dedup_key="bet_request_error",
-            enabled=telegram_notify_bet_errors,
+            enabled=telegram_config.notify_bet_errors,
         )
         old_step, max_steps, restarted = advance_step_after_set_error_func()
-        if bet_debug_enabled:
+        if betting_config.debug_enabled:
             new_step = betting_state.get("current_step", 0)
             restart_note = " [♻️ RESTART]" if restarted else ""
             print(f"[SET-ERROR] Шаг сдвинут: {old_step+1}/{max_steps} -> {new_step+1}/{max_steps}{restart_note}", flush=True)
@@ -533,14 +526,10 @@ async def process_betting_round(
     page,
     payload: object,
     *,
-    betting_state: dict,
-    current_strategy: dict | None,
-    dynamic_bet_mode: bool,
-    bet_debug_enabled: bool,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     format_ws_payload_func,
     get_db_connection_func,
-    get_current_bet_target_func,
-    set_current_bet_target_func,
     format_round_result_pretty_func,
     format_outcome_pretty_func,
     format_bet_log_func,
@@ -554,6 +543,10 @@ async def process_betting_round(
     calculate_bet_amount_func,
     place_bet_func,
 ) -> None:
+    betting_state = runtime_context.betting_state
+    current_strategy = runtime_context.current_strategy
+    dynamic_bet_mode = runtime_config.dynamic_betting.enabled
+    bet_debug_enabled = runtime_config.betting.debug_enabled
     try:
         payload_text = format_ws_payload_func(payload)
         parsed_payload = json.loads(payload_text)
@@ -594,7 +587,7 @@ async def process_betting_round(
     betting_state["last_round_player_name"] = player_info.get("name")
     betting_state["last_round_position"] = player_info.get("position")
 
-    current_outcome, current_specifier = get_current_bet_target_func()
+    current_outcome, current_specifier = runtime_context.get_current_bet_target()
     matching_dice = None
     is_win = False
     actual_dice_value = None
@@ -737,16 +730,16 @@ async def process_betting_round(
         if bet_debug_enabled:
             print("[DEBUG PROCESS] Entering if DYNAMIC_BET_MODE, calling function", flush=True)
         update_dynamic_bet_func()
-        current_outcome, current_specifier = get_current_bet_target_func()
+        current_outcome, current_specifier = runtime_context.get_current_bet_target()
 
     consecutive_losses = betting_state.get("consecutive_losses", 0)
     if consecutive_losses >= 15:
         print("", flush=True)
         new_outcome, new_specifier = generate_random_bet_func()
-        set_current_bet_target_func(new_outcome, new_specifier)
+        runtime_context.set_current_bet_target(new_outcome, new_specifier)
         betting_state["consecutive_losses"] = 0
         print("", flush=True)
-        current_outcome, current_specifier = get_current_bet_target_func()
+        current_outcome, current_specifier = runtime_context.get_current_bet_target()
 
     bet_amount = calculate_bet_amount_func()
     if bet_debug_enabled:

@@ -3,24 +3,28 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import asyncio
 
+from buybaybye.runtime_context import RuntimeContext
+from buybaybye.runtime_config import RuntimeConfig
+
 
 def wire_ws_logging(
     page,
     *,
-    betting_state: dict,
-    target_ws_url: str,
-    accounting_ws_url: str,
-    ws_log_enabled: bool,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     update_runtime_snapshot_func,
     format_ws_payload_func,
     update_balance_from_accounting_payload_func,
     save_target_ws_message_func,
-    bet_mode_enabled: bool,
     process_betting_round_func,
 ) -> None:
+    betting_state = runtime_context.betting_state
+    browser_config = runtime_config.browser
+    ws_log_enabled = runtime_config.logging.ws_log_enabled
+
     def on_websocket(ws) -> None:
-        is_target = ws.url.startswith(target_ws_url)
-        is_accounting = ws.url.startswith(accounting_ws_url)
+        is_target = ws.url.startswith(browser_config.target_ws_url)
+        is_accounting = ws.url.startswith(browser_config.accounting_ws_url)
         tag = "TARGET-WS" if is_target else "WS"
         if is_accounting:
             betting_state["accounting_ws_connected"] = True
@@ -42,7 +46,7 @@ def wire_ws_logging(
 
             if is_target:
                 save_target_ws_message_func(payload)
-                if bet_mode_enabled:
+                if runtime_config.betting.enabled:
                     asyncio.create_task(process_betting_round_func(page, payload))
 
         def on_close(*_) -> None:

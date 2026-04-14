@@ -9,6 +9,8 @@ from aiogram import Bot, Dispatcher, Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from buybaybye.runtime_config import TelegramConfig
+
 telegram_notification_timestamps: dict[str, float] = {}
 
 
@@ -30,12 +32,12 @@ async def send_telegram_notification_async(bot_token: str, chat_id: str, title: 
         await bot.session.close()
 
 
-def send_telegram_notification_sync(notifications_enabled: bool, bot_token: str, chat_id: str, title: str, message: str) -> None:
-    if not notifications_enabled or not bot_token or not chat_id:
+def send_telegram_notification_sync(telegram_config: TelegramConfig, title: str, message: str) -> None:
+    if not telegram_config.notifications_enabled or not telegram_config.bot_token or not telegram_config.chat_id:
         return
 
     try:
-        asyncio.run(send_telegram_notification_async(bot_token, chat_id, title, message))
+        asyncio.run(send_telegram_notification_async(telegram_config.bot_token, telegram_config.chat_id, title, message))
     except Exception as exc:
         print(f"[TELEGRAM] Ошибка отправки уведомления: {exc}", flush=True)
 
@@ -46,33 +48,30 @@ def queue_telegram_notification(
     message: str,
     dedup_key: str,
     enabled: bool,
-    notifications_enabled: bool,
-    bot_token: str,
-    chat_id: str,
-    cooldown_seconds: float,
+    telegram_config: TelegramConfig,
 ) -> None:
-    if not enabled or not notifications_enabled or not bot_token or not chat_id:
+    if not enabled or not telegram_config.notifications_enabled or not telegram_config.bot_token or not telegram_config.chat_id:
         return
 
     now_ts = datetime.now(timezone.utc).timestamp()
     last_ts = telegram_notification_timestamps.get(dedup_key)
-    if last_ts is not None and now_ts - last_ts < cooldown_seconds:
+    if last_ts is not None and now_ts - last_ts < telegram_config.notification_cooldown_seconds:
         return
 
     telegram_notification_timestamps[dedup_key] = now_ts
     threading.Thread(
         target=send_telegram_notification_sync,
-        args=(notifications_enabled, bot_token, chat_id, title, message),
+        args=(telegram_config, title, message),
         daemon=True,
     ).start()
 
 
-async def run_telegram_chat_id_helper(bot_token: str) -> None:
-    if not bot_token:
+async def run_telegram_chat_id_helper(telegram_config: TelegramConfig) -> None:
+    if not telegram_config.bot_token:
         print("[TELEGRAM] TELEGRAM_BOT_TOKEN не задан. Заполните его в .env и повторите команду.", flush=True)
         return
 
-    bot = Bot(token=bot_token)
+    bot = Bot(token=telegram_config.bot_token)
     dp = Dispatcher()
     router = Router()
 

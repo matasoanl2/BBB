@@ -4,9 +4,12 @@ import asyncio
 import json
 from datetime import datetime, timezone
 
+from buybaybye.runtime_context import RuntimeContext
+from buybaybye.runtime_config import RuntimeConfig
 
-def get_accounting_age_seconds(*, betting_state: dict, reference_key: str) -> float | None:
-    raw_value = betting_state.get(reference_key)
+
+def get_accounting_age_seconds(*, runtime_context: RuntimeContext, reference_key: str) -> float | None:
+    raw_value = runtime_context.betting_state.get(reference_key)
     if not raw_value:
         return None
     try:
@@ -16,7 +19,8 @@ def get_accounting_age_seconds(*, betting_state: dict, reference_key: str) -> fl
     return max(0.0, (datetime.now(timezone.utc) - timestamp).total_seconds())
 
 
-def is_account_balance_stale(*, betting_state: dict, stale_seconds: float, get_accounting_age_seconds_func) -> bool:
+def is_account_balance_stale(*, runtime_context: RuntimeContext, runtime_config: RuntimeConfig, get_accounting_age_seconds_func) -> bool:
+    betting_state = runtime_context.betting_state
     if not betting_state:
         return False
     if betting_state.get("account_balance") is None:
@@ -31,24 +35,24 @@ def is_account_balance_stale(*, betting_state: dict, stale_seconds: float, get_a
     age_seconds = get_accounting_age_seconds_func("account_balance_updated_at")
     if age_seconds is None:
         return True
-    return age_seconds >= stale_seconds
+    return age_seconds >= runtime_config.accounting.balance_stale_seconds
 
 
 def record_accounting_rejection(
     *,
-    betting_state: dict,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     reason: str,
     payload_preview: str | None,
-    debug_rejected_messages: bool,
-    bet_debug_enabled: bool,
 ) -> None:
-    betting_state["last_accounting_rejection_reason"] = reason
-    if debug_rejected_messages or bet_debug_enabled:
+    runtime_context.betting_state["last_accounting_rejection_reason"] = reason
+    if runtime_config.accounting.debug_rejected_messages or runtime_config.betting.debug_enabled:
         preview = f" | payload={payload_preview[:220]}" if payload_preview else ""
         print(f"[ACCOUNTING][SKIP] {reason}{preview}", flush=True)
 
 
-def get_balance_for_log(*, betting_state: dict, is_account_balance_stale_func) -> str:
+def get_balance_for_log(*, runtime_context: RuntimeContext, is_account_balance_stale_func) -> str:
+    betting_state = runtime_context.betting_state
     account_balance = betting_state.get("account_balance")
     if account_balance is not None:
         suffix = " !" if is_account_balance_stale_func() else ""
@@ -59,14 +63,14 @@ def get_balance_for_log(*, betting_state: dict, is_account_balance_stale_func) -
 def update_balance_from_accounting_payload(
     payload: object,
     *,
-    betting_state: dict,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     format_ws_payload_func,
     record_accounting_rejection_func,
     update_runtime_snapshot_func,
     queue_telegram_notification_func,
-    notify_withdrawals: bool,
-    bet_debug_enabled: bool,
 ) -> None:
+    betting_state = runtime_context.betting_state
     try:
         payload_text = format_ws_payload_func(payload)
         data = json.loads(payload_text)
@@ -135,7 +139,7 @@ def update_balance_from_accounting_payload(
                     f"Session balance: {betting_state['session_balance']:.0f}р"
                 ),
                 dedup_key="withdrawal_detected",
-                enabled=notify_withdrawals,
+                enabled=runtime_config.telegram.notify_withdrawals,
             )
 
     betting_state["pending_expected_bet_drop"] = pending_expected_bet_drop
@@ -151,7 +155,7 @@ def update_balance_from_accounting_payload(
         },
     )
 
-    if bet_debug_enabled:
+    if runtime_config.betting.debug_enabled:
         btype = betting_state.get("account_balance_type")
         print(f"[ACCOUNTING] Баланс обновлен: {new_balance} (balance_type={btype})", flush=True)
 
@@ -160,12 +164,13 @@ async def reload_page_for_accounting_recovery(
     page,
     reason: str,
     *,
-    betting_state: dict,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     get_balance_for_log_func,
     queue_telegram_notification_func,
-    notify_accounting_issues: bool,
     update_runtime_snapshot_func,
 ) -> bool:
+    betting_state = runtime_context.betting_state
     if page.is_closed():
         return False
 
@@ -174,7 +179,7 @@ async def reload_page_for_accounting_recovery(
         "[BuyBayBye] Проблема с accounting balance",
         f"Запущено восстановление accounting_ws.\nПричина: {reason}\nПоследний real balance: {get_balance_for_log_func()}",
         dedup_key=f"accounting_recovery_start:{reason}",
-        enabled=notify_accounting_issues,
+        enabled=runtime_config.telegram.notify_accounting_issues,
     )
     try:
         await page.reload(wait_until="domcontentloaded", timeout=30000)
@@ -184,7 +189,7 @@ async def reload_page_for_accounting_recovery(
             "[BuyBayBye] Ошибка восстановления accounting_ws",
             f"Page reload завершился ошибкой.\nПричина: {reason}\nОшибка: {exc}",
             dedup_key=f"accounting_recovery_error:{reason}",
-            enabled=notify_accounting_issues,
+            enabled=runtime_config.telegram.notify_accounting_issues,
         )
         return False
 
@@ -201,7 +206,7 @@ async def reload_page_for_accounting_recovery(
         "[BuyBayBye] accounting_ws восстановлен",
         f"Перезагрузка страницы завершилась успешно.\nПричина: {reason}\nТекущий real balance: {get_balance_for_log_func()}",
         dedup_key=f"accounting_recovery_success:{reason}",
-        enabled=notify_accounting_issues,
+        enabled=runtime_config.telegram.notify_accounting_issues,
     )
     return True
 
@@ -209,13 +214,13 @@ async def reload_page_for_accounting_recovery(
 async def monitor_accounting_ws_health(
     page,
     *,
-    betting_state: dict,
-    recovery_cooldown_seconds: float,
-    recovery_reload_seconds: float,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     get_accounting_age_seconds_func,
     is_account_balance_stale_func,
     reload_page_for_accounting_recovery_func,
 ) -> None:
+    betting_state = runtime_context.betting_state
     while True:
         await asyncio.sleep(3.0)
 
@@ -223,7 +228,7 @@ async def monitor_accounting_ws_health(
             return
 
         last_recovery_age = get_accounting_age_seconds_func("last_accounting_recovery_at")
-        if last_recovery_age is not None and last_recovery_age < recovery_cooldown_seconds:
+        if last_recovery_age is not None and last_recovery_age < runtime_config.accounting.recovery_cooldown_seconds:
             continue
 
         ws_age = get_accounting_age_seconds_func("last_accounting_ws_message_at")
@@ -232,12 +237,12 @@ async def monitor_accounting_ws_health(
         reason = None
         if betting_state.get("accounting_ws_connected") is False and betting_state.get("last_accounting_ws_closed_at"):
             reason = "accounting_ws closed"
-        elif is_account_balance_stale_func() and balance_age is not None and balance_age >= recovery_reload_seconds:
+        elif is_account_balance_stale_func() and balance_age is not None and balance_age >= runtime_config.accounting.recovery_reload_seconds:
             reason = f"balance_update stale for {balance_age:.0f}s"
         elif (
             betting_state.get("account_balance") is not None
             and ws_age is not None
-            and ws_age >= recovery_reload_seconds
+            and ws_age >= runtime_config.accounting.recovery_reload_seconds
             and float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0) > 0
         ):
             reason = f"no accounting messages for {ws_age:.0f}s"

@@ -4,32 +4,28 @@ from datetime import datetime, timezone
 
 from psycopg2.extras import Json
 
+from buybaybye.runtime_context import RuntimeContext
+from buybaybye.runtime_config import RuntimeConfig
+
 
 def build_runtime_snapshot(
     *,
     event_type: str = "heartbeat",
     extra: dict | None = None,
-    betting_state: dict,
-    current_strategy: dict | None,
-    strategy_name: str,
-    bet_mode_enabled: bool,
-    dynamic_bet_mode: bool,
-    bet_mode_outcome: str,
-    bet_mode_specifier: str,
-    dynamic_use_average_value_selection: bool,
-    dynamic_include_double_selection: bool,
-    dynamic_filter_by_player: bool,
-    dynamic_filter_by_side: bool,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     is_account_balance_stale_func,
 ) -> dict:
-    strategy_name_value = strategy_name if bet_mode_enabled else None
+    betting_state = runtime_context.betting_state
+    current_strategy = runtime_context.current_strategy
+    strategy_name_value = runtime_config.betting.strategy_name if runtime_config.betting.enabled else None
     strategy_display_name = current_strategy.get("name") if current_strategy else None
     max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else None
 
     snapshot = {
         "event_type": event_type,
-        "bet_mode_enabled": bet_mode_enabled,
-        "dynamic_bet_mode": dynamic_bet_mode,
+        "bet_mode_enabled": runtime_config.betting.enabled,
+        "dynamic_bet_mode": runtime_config.dynamic_betting.enabled,
         "strategy_name": strategy_name_value,
         "strategy_display_name": strategy_display_name,
         "current_step": betting_state.get("current_step") if betting_state else None,
@@ -51,14 +47,14 @@ def build_runtime_snapshot(
         "total_bets_placed": betting_state.get("total_bets_placed") if betting_state else 0,
         "pending_expected_bet_drop": betting_state.get("pending_expected_bet_drop") if betting_state else 0.0,
         "external_withdrawals_total": betting_state.get("external_withdrawals_total") if betting_state else 0.0,
-        "current_outcome": bet_mode_outcome if bet_mode_enabled else None,
-        "current_specifier": bet_mode_specifier if bet_mode_enabled else None,
+        "current_outcome": runtime_context.bet_mode_outcome if runtime_config.betting.enabled else None,
+        "current_specifier": runtime_context.bet_mode_specifier if runtime_config.betting.enabled else None,
         "dynamic_outcome": betting_state.get("dynamic_outcome") if betting_state else None,
         "dynamic_specifier": betting_state.get("dynamic_specifier") if betting_state else None,
-        "dynamic_use_average_value_selection": dynamic_use_average_value_selection,
-        "dynamic_include_double_selection": dynamic_include_double_selection,
-        "dynamic_filter_by_player": dynamic_filter_by_player,
-        "dynamic_filter_by_side": dynamic_filter_by_side,
+        "dynamic_use_average_value_selection": runtime_config.dynamic_betting.use_average_value_selection,
+        "dynamic_include_double_selection": runtime_config.dynamic_betting.include_double_selection,
+        "dynamic_filter_by_player": runtime_config.dynamic_betting.filter_by_player,
+        "dynamic_filter_by_side": runtime_config.dynamic_betting.filter_by_side,
         "last_bet_amount": betting_state.get("last_bet_amount") if betting_state else 0.0,
         "last_set_amount": betting_state.get("last_set_amount") if betting_state else 0.0,
         "last_set_status": betting_state.get("last_set_status") if betting_state else None,

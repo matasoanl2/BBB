@@ -2,25 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from pathlib import Path
+
+from buybaybye.runtime_context import RuntimeContext
+from buybaybye.runtime_config import RuntimeConfig
 
 
 def print_strategy_startup_info(
     *,
-    current_strategy: dict,
-    strategy_name: str,
-    base_bet: float,
-    dynamic_bet_mode: bool,
-    dynamic_window_size: int,
-    dynamic_recalc_interval: int,
-    dynamic_use_average_value_selection: bool,
-    dynamic_include_double_selection: bool,
-    dynamic_filter_by_player: bool,
-    dynamic_filter_by_side: bool,
-    bet_mode_outcome: str,
-    bet_mode_specifier: str,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     format_outcome_pretty_func,
 ) -> None:
+    current_strategy = runtime_context.current_strategy
+    dynamic_config = runtime_config.dynamic_betting
+    base_bet = runtime_config.betting.base_bet
     print(f"[STRATEGY] Загружена стратегия: {current_strategy['name']}", flush=True)
     print(f"[STRATEGY] Описание: {current_strategy['description']}", flush=True)
     print(f"[STRATEGY] Шагов: {len(current_strategy['coefficients'])}, базовая ставка: {base_bet}р", flush=True)
@@ -30,15 +25,15 @@ def print_strategy_startup_info(
         bet_amount = base_bet * coeff
         print(f"  Step {index+1}: {base_bet}р × {coeff} = {bet_amount}р ✓", flush=True)
 
-    if dynamic_bet_mode:
+    if dynamic_config.enabled:
         print("\n[DYNAMIC] 🔄 ДИНАМИЧЕСКИЙ РЕЖИМ ВКЛЮЧЕН", flush=True)
-        print(f"[DYNAMIC] Окно анализа: {dynamic_window_size} ставок", flush=True)
-        print(f"[DYNAMIC] Пересчет: каждые {dynamic_recalc_interval} ставок", flush=True)
-        print(f"[DYNAMIC] Выбор по среднему значению: {'ON' if dynamic_use_average_value_selection else 'OFF'}", flush=True)
-        print(f"[DYNAMIC] Учитывать double: {'ON' if dynamic_include_double_selection else 'OFF'}", flush=True)
-        print(f"[DYNAMIC] Фильтр по игроку: {'ON' if dynamic_filter_by_player else 'OFF'}", flush=True)
-        print(f"[DYNAMIC] Фильтр по стороне: {'ON' if dynamic_filter_by_side else 'OFF'}", flush=True)
-        print(f"[DYNAMIC] Начальная ставка: {format_outcome_pretty_func(bet_mode_outcome, bet_mode_specifier)}", flush=True)
+        print(f"[DYNAMIC] Окно анализа: {dynamic_config.window_size} ставок", flush=True)
+        print(f"[DYNAMIC] Пересчет: каждые {dynamic_config.recalc_interval} ставок", flush=True)
+        print(f"[DYNAMIC] Выбор по среднему значению: {'ON' if dynamic_config.use_average_value_selection else 'OFF'}", flush=True)
+        print(f"[DYNAMIC] Учитывать double: {'ON' if dynamic_config.include_double_selection else 'OFF'}", flush=True)
+        print(f"[DYNAMIC] Фильтр по игроку: {'ON' if dynamic_config.filter_by_player else 'OFF'}", flush=True)
+        print(f"[DYNAMIC] Фильтр по стороне: {'ON' if dynamic_config.filter_by_side else 'OFF'}", flush=True)
+        print(f"[DYNAMIC] Начальная ставка: {format_outcome_pretty_func(runtime_context.bet_mode_outcome, runtime_context.bet_mode_specifier)}", flush=True)
 
 
 def get_browser_launch_args() -> list[str]:
@@ -67,27 +62,19 @@ def get_browser_launch_args() -> list[str]:
 
 def build_runtime_status_line(
     *,
-    session_dir: Path,
-    bet_mode_enabled: bool,
-    current_strategy: dict | None,
-    bet_mode_outcome: str,
-    bet_mode_specifier: str,
-    base_bet: float,
-    bet_delay_min: float,
-    bet_delay_max: float,
-    accounting_balance_stale_seconds: float,
-    accounting_recovery_reload_seconds: float,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
 ) -> str:
-    status_line = f"Браузер открыт. Профиль сессии: {session_dir}\n"
-    if bet_mode_enabled and current_strategy:
+    status_line = f"Браузер открыт. Профиль сессии: {runtime_config.browser.session_dir}\n"
+    if runtime_config.betting.enabled and runtime_context.current_strategy:
         status_line += "🎲 РЕЖИМ СТАВОК ВКЛЮЧЕН\n"
-        status_line += f"  - Стратегия: {current_strategy['name']}\n"
-        status_line += f"  - Цель: {bet_mode_outcome} = {bet_mode_specifier}\n"
-        status_line += f"  - Базовая ставка: {base_bet}р\n"
-        status_line += f"  - Коэффициентов в прогрессии: {len(current_strategy['coefficients'])}\n"
-        status_line += f"  - Задержка перед ставкой: {bet_delay_min:.1f}-{bet_delay_max:.1f}с\n"
-    status_line += f"  - Accounting stale timeout: {accounting_balance_stale_seconds:.0f}с\n"
-    status_line += f"  - Accounting recovery reload: {accounting_recovery_reload_seconds:.0f}с\n"
+        status_line += f"  - Стратегия: {runtime_context.current_strategy['name']}\n"
+        status_line += f"  - Цель: {runtime_context.bet_mode_outcome} = {runtime_context.bet_mode_specifier}\n"
+        status_line += f"  - Базовая ставка: {runtime_config.betting.base_bet}р\n"
+        status_line += f"  - Коэффициентов в прогрессии: {len(runtime_context.current_strategy['coefficients'])}\n"
+        status_line += f"  - Задержка перед ставкой: {runtime_config.betting.bet_delay_min:.1f}-{runtime_config.betting.bet_delay_max:.1f}с\n"
+    status_line += f"  - Accounting stale timeout: {runtime_config.accounting.balance_stale_seconds:.0f}с\n"
+    status_line += f"  - Accounting recovery reload: {runtime_config.accounting.recovery_reload_seconds:.0f}с\n"
     status_line += "Закройте окно браузера или нажмите Enter здесь - сессия сохранится."
     return status_line
 

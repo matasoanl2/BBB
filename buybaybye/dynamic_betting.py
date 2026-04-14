@@ -3,9 +3,12 @@ from __future__ import annotations
 import psycopg2
 import random
 
+from buybaybye.runtime_context import RuntimeContext
+from buybaybye.runtime_config import RuntimeConfig
 
-def analyze_recent_bets_stats(*, betting_state: dict) -> dict:
-    recent_bets = betting_state.get("recent_bets", [])
+
+def analyze_recent_bets_stats(*, runtime_context: RuntimeContext) -> dict:
+    recent_bets = runtime_context.betting_state.get("recent_bets", [])
     if not recent_bets:
         return {}
 
@@ -24,24 +27,20 @@ def analyze_recent_bets_stats(*, betting_state: dict) -> dict:
 
 def analyze_all_results_frequency(
     *,
-    betting_state: dict,
-    db_host: str,
-    db_port: str,
-    db_user: str,
-    db_password: str,
-    db_name: str,
-    dynamic_window_size: int,
-    dynamic_filter_by_player: bool,
-    dynamic_filter_by_side: bool,
-    bet_debug_enabled: bool,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
 ) -> dict:
+    betting_state = runtime_context.betting_state
+    database_config = runtime_config.database
+    dynamic_config = runtime_config.dynamic_betting
+    bet_debug_enabled = runtime_config.betting.debug_enabled
     try:
         conn = psycopg2.connect(
-            host=db_host,
-            port=db_port,
-            user=db_user,
-            password=db_password,
-            database=db_name,
+            host=database_config.host,
+            port=database_config.port,
+            user=database_config.user,
+            password=database_config.password,
+            database=database_config.name,
         )
         cursor = conn.cursor()
 
@@ -50,11 +49,11 @@ def analyze_all_results_frequency(
         where_clauses = []
         query_params = []
 
-        if dynamic_filter_by_player and current_player_name:
+        if dynamic_config.filter_by_player and current_player_name:
             where_clauses.append("player_name = %s")
             query_params.append(current_player_name)
 
-        if dynamic_filter_by_side and current_position:
+        if dynamic_config.filter_by_side and current_position:
             where_clauses.append("dice_results->'player'->>'position' = %s")
             query_params.append(current_position)
 
@@ -62,7 +61,7 @@ def analyze_all_results_frequency(
         if where_clauses:
             query += " WHERE " + " AND ".join(where_clauses)
         query += " ORDER BY timestamp DESC LIMIT %s"
-        query_params.append(dynamic_window_size)
+        query_params.append(dynamic_config.window_size)
 
         cursor.execute(query, tuple(query_params))
         results = cursor.fetchall()
@@ -107,11 +106,11 @@ def analyze_all_results_frequency(
         for combo in stats:
             stats[combo]["frequency"] = (stats[combo]["freq"] / total_results) * 100
 
-        if bet_debug_enabled and (dynamic_filter_by_player or dynamic_filter_by_side):
+        if bet_debug_enabled and (dynamic_config.filter_by_player or dynamic_config.filter_by_side):
             applied_filters = []
-            if dynamic_filter_by_player and current_player_name:
+            if dynamic_config.filter_by_player and current_player_name:
                 applied_filters.append(f"player={current_player_name}")
-            if dynamic_filter_by_side and current_position:
+            if dynamic_config.filter_by_side and current_position:
                 applied_filters.append(f"side={current_position}")
             if applied_filters:
                 print(f"[DEBUG DYNAMIC] Применены фильтры анализа: {', '.join(applied_filters)}", flush=True)
@@ -126,13 +125,13 @@ def analyze_all_results_frequency(
 def get_best_combination(
     *,
     stats: dict | None,
-    default_outcome: str,
-    default_specifier: str,
-    dynamic_include_double_selection: bool,
-    dynamic_use_average_value_selection: bool,
-    bet_debug_enabled: bool,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     analyze_all_results_frequency_func,
 ) -> tuple[str, str]:
+    default_outcome, default_specifier = runtime_context.get_current_bet_target()
+    dynamic_config = runtime_config.dynamic_betting
+    bet_debug_enabled = runtime_config.betting.debug_enabled
     if stats is None:
         stats = analyze_all_results_frequency_func()
 
@@ -140,13 +139,13 @@ def get_best_combination(
         return (default_outcome, default_specifier)
 
     selectable_stats = dict(stats)
-    if not dynamic_include_double_selection:
+    if not dynamic_config.include_double_selection:
         selectable_stats.pop("double", None)
 
     if not selectable_stats:
         return (default_outcome, default_specifier)
 
-    if not dynamic_use_average_value_selection:
+    if not dynamic_config.use_average_value_selection:
         best_combo = max(selectable_stats.items(), key=lambda item: (item[1]["frequency"], item[1]["freq"]))
         combo_key = best_combo[0]
         if bet_debug_enabled:
@@ -185,7 +184,7 @@ def get_best_combination(
             "rounded_value": rounded_value,
         }))
 
-    if dynamic_include_double_selection and "double" in selectable_stats:
+    if dynamic_config.include_double_selection and "double" in selectable_stats:
         double_stats = selectable_stats["double"]
         candidates.append(("double", {
             "freq": int(double_stats.get("freq", 0) or 0),
@@ -218,42 +217,40 @@ def get_best_combination(
 
 def update_dynamic_bet(
     *,
-    current_outcome: str,
-    current_specifier: str,
-    betting_state: dict,
-    dynamic_bet_mode: bool,
-    dynamic_recalc_interval: int,
-    dynamic_window_size: int,
-    dynamic_use_average_value_selection: bool,
-    dynamic_include_double_selection: bool,
-    bet_debug_enabled: bool,
-    color_cyan: str,
-    color_reset: str,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
     analyze_all_results_frequency_func,
     get_best_combination_func,
     format_outcome_pretty_func,
     format_combo_pretty_func,
 ) -> tuple[str, str]:
-    if bet_debug_enabled:
-        print(f"[DEBUG UPDATE_DYN] Function entered. DYNAMIC_BET_MODE={dynamic_bet_mode}", flush=True)
+    current_outcome, current_specifier = runtime_context.get_current_bet_target()
+    betting_state = runtime_context.betting_state
+    dynamic_config = runtime_config.dynamic_betting
+    bet_debug_enabled = runtime_config.betting.debug_enabled
+    color_cyan = runtime_config.colors.cyan
+    color_reset = runtime_config.colors.reset
 
-    if not dynamic_bet_mode:
+    if bet_debug_enabled:
+        print(f"[DEBUG UPDATE_DYN] Function entered. DYNAMIC_BET_MODE={dynamic_config.enabled}", flush=True)
+
+    if not dynamic_config.enabled:
         if bet_debug_enabled:
             print("[DEBUG UPDATE_DYN] Early return: DYNAMIC_BET_MODE is False", flush=True)
         return current_outcome, current_specifier
 
     total_bets = betting_state.get("total_bets_placed", 0)
-    next_trigger = ((total_bets // dynamic_recalc_interval) + 1) * dynamic_recalc_interval
+    next_trigger = ((total_bets // dynamic_config.recalc_interval) + 1) * dynamic_config.recalc_interval
     if bet_debug_enabled:
-        modulo_result = total_bets % dynamic_recalc_interval if dynamic_recalc_interval > 0 else "ERROR"
-        print(f"[DEBUG UPDATE_DYN] total_bets={total_bets}, DYNAMIC_RECALC_INTERVAL={dynamic_recalc_interval}, modulo result={modulo_result}, next trigger at {next_trigger}", flush=True)
+        modulo_result = total_bets % dynamic_config.recalc_interval if dynamic_config.recalc_interval > 0 else "ERROR"
+        print(f"[DEBUG UPDATE_DYN] total_bets={total_bets}, DYNAMIC_RECALC_INTERVAL={dynamic_config.recalc_interval}, modulo result={modulo_result}, next trigger at {next_trigger}", flush=True)
 
-    if not (total_bets > 0 and total_bets % dynamic_recalc_interval == 0):
+    if not (total_bets > 0 and total_bets % dynamic_config.recalc_interval == 0):
         return current_outcome, current_specifier
 
     stats = analyze_all_results_frequency_func()
     if bet_debug_enabled:
-        print(f"[DEBUG DYNAMIC] Проверка на ходу {total_bets}: results_window={dynamic_window_size}, interval={dynamic_recalc_interval}, analyzed_combos={len(stats)}", flush=True)
+        print(f"[DEBUG DYNAMIC] Проверка на ходу {total_bets}: results_window={dynamic_config.window_size}, interval={dynamic_config.recalc_interval}, analyzed_combos={len(stats)}", flush=True)
 
     if not stats:
         if bet_debug_enabled:
@@ -267,6 +264,7 @@ def update_dynamic_bet(
     if best_outcome != current_outcome or best_specifier != current_specifier:
         current_outcome = best_outcome
         current_specifier = best_specifier if best_specifier else "5"
+        runtime_context.set_current_bet_target(current_outcome, current_specifier)
         betting_state["dynamic_outcome"] = current_outcome
         betting_state["dynamic_specifier"] = current_specifier
 
@@ -297,12 +295,12 @@ def update_dynamic_bet(
     return current_outcome, current_specifier
 
 
-def generate_random_bet(*, color_magenta: str, color_reset: str, format_outcome_pretty_func) -> tuple[str, str]:
+def generate_random_bet(*, runtime_config: RuntimeConfig, format_outcome_pretty_func) -> tuple[str, str]:
     combos = [
         ("red", "1"), ("red", "2"), ("red", "3"), ("red", "4"), ("red", "5"), ("red", "6"),
         ("yellow", "1"), ("yellow", "2"), ("yellow", "3"), ("yellow", "4"), ("yellow", "5"), ("yellow", "6"),
         ("double", ""),
     ]
     outcome, specifier = random.choice(combos)
-    print(f"{color_magenta}⚠️  ПОЛОСА ИЗ 15 ПРОИГРЫШЕЙ! Генерируем СЛУЧАЙНУЮ ставку: {format_outcome_pretty_func(outcome, specifier)}{color_reset}", flush=True)
+    print(f"{runtime_config.colors.magenta}⚠️  ПОЛОСА ИЗ 15 ПРОИГРЫШЕЙ! Генерируем СЛУЧАЙНУЮ ставку: {format_outcome_pretty_func(outcome, specifier)}{runtime_config.colors.reset}", flush=True)
     return outcome, specifier
