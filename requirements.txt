@@ -1,6 +1,6 @@
 patchright
 psycopg2-binary
-requests
+aiogram
 PyYAML
 tabulate
 tqdm
