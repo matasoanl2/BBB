@@ -11,6 +11,9 @@ profile_backups/
 # Exports files
 exports/
 
+# Reports
+reports/
+
 # JSON Messages
 target_ws_messages.json
 

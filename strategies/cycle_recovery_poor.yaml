@@ -1,5 +1,5 @@
-name: "Cycle Recovery Absolute"
+name: "Cycle Recovery Poor"
 description: "Циклическая стратегия с повторяющимся паттерном восстановления"
-coefficients: [1, 1, 2, 2, 4, 1, 1, 2, 2, 4, 1, 2, 4, 8, 16, 16]
+coefficients: [1, 1, 2, 2, 4]
 payout_coefficient: 5.7
 reset_condition: "win"
