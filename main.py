@@ -57,8 +57,16 @@ STRATEGY_NAME = os.getenv("STRATEGY", "balanced")  # название страт
 DYNAMIC_BET_MODE = os.getenv("DYNAMIC_BET_MODE", "false").lower() in {"1", "true", "yes", "on"}
 DYNAMIC_WINDOW_SIZE = int(os.getenv("DYNAMIC_WINDOW_SIZE", "40"))  # размер окна анализа
 DYNAMIC_RECALC_INTERVAL = int(os.getenv("DYNAMIC_RECALC_INTERVAL", "5"))  # как часто пересчитывать
+DYNAMIC_USE_AVERAGE_VALUE_SELECTION = os.getenv("DYNAMIC_USE_AVERAGE_VALUE_SELECTION", "true").lower() in {"1", "true", "yes", "on"}
+DYNAMIC_INCLUDE_DOUBLE_SELECTION = os.getenv("DYNAMIC_INCLUDE_DOUBLE_SELECTION", "true").lower() in {"1", "true", "yes", "on"}
 DYNAMIC_FILTER_BY_PLAYER = os.getenv("DYNAMIC_FILTER_BY_PLAYER", "false").lower() in {"1", "true", "yes", "on"}
 DYNAMIC_FILTER_BY_SIDE = os.getenv("DYNAMIC_FILTER_BY_SIDE", "false").lower() in {"1", "true", "yes", "on"}
+
+# Accounting WS: stale-balance diagnostics and recovery
+ACCOUNTING_BALANCE_STALE_SECONDS = float(os.getenv("ACCOUNTING_BALANCE_STALE_SECONDS", "15"))
+ACCOUNTING_RECOVERY_RELOAD_SECONDS = float(os.getenv("ACCOUNTING_RECOVERY_RELOAD_SECONDS", "25"))
+ACCOUNTING_RECOVERY_COOLDOWN_SECONDS = float(os.getenv("ACCOUNTING_RECOVERY_COOLDOWN_SECONDS", "30"))
+ACCOUNTING_DEBUG_REJECTED_MESSAGES = os.getenv("ACCOUNTING_DEBUG_REJECTED_MESSAGES", "false").lower() in {"1", "true", "yes", "on"}
 
 # Случайная задержка перед ставкой (в секундах)
 BET_DELAY_MIN = float(os.getenv("BET_DELAY_MIN", "0.8"))
@@ -86,6 +94,7 @@ COLOR_RESET = "\033[0m" if COLOR_ENABLED else ""
 loaded_strategies = {}
 current_strategy = None
 jwt_token_global = None  # Глобальное хранилище найденного JWT токена
+page_reload_lock: asyncio.Lock | None = None
 
 
 def _handle_response(response):
@@ -225,29 +234,59 @@ def _is_forbidden_access_error(status_code: int, response_text: str) -> bool:
 
 async def _reload_page_and_refresh_token(page) -> bool:
     """Перезагрузить страницу и дождаться повторного получения JWT токена."""
-    global jwt_token_global
+    global jwt_token_global, page_reload_lock
 
-    old_token = jwt_token_global
-    jwt_token_global = None
-    print("[AUTH] Получен 403 FORBIDDEN, перезагружаем страницу и обновляем JWT токен...", flush=True)
+    if page_reload_lock is None:
+        page_reload_lock = asyncio.Lock()
 
-    try:
-        await page.reload(wait_until="domcontentloaded", timeout=30000)
-    except Exception as e:
-        print(f"[AUTH] Ошибка перезагрузки страницы при обновлении токена: {e}", flush=True)
+    async with page_reload_lock:
+        old_token = jwt_token_global
+        jwt_token_global = None
+        print("[AUTH] Получен 403 FORBIDDEN, перезагружаем страницу и обновляем JWT токен...", flush=True)
+
+        try:
+            await page.reload(wait_until="domcontentloaded", timeout=30000)
+        except Exception as e:
+            print(f"[AUTH] Ошибка перезагрузки страницы при обновлении токена: {e}", flush=True)
+            return False
+
+        deadline = asyncio.get_running_loop().time() + 20.0
+        while asyncio.get_running_loop().time() < deadline:
+            if jwt_token_global:
+                token_changed = old_token is None or jwt_token_global != old_token
+                change_note = "новый" if token_changed else "повторно получен"
+                print(f"[AUTH] JWT токен {change_note} после перезагрузки страницы.", flush=True)
+                return True
+            await asyncio.sleep(0.25)
+
+        print("[AUTH] JWT токен не был получен после перезагрузки страницы.", flush=True)
         return False
 
-    deadline = asyncio.get_running_loop().time() + 20.0
-    while asyncio.get_running_loop().time() < deadline:
-        if jwt_token_global:
-            token_changed = old_token is None or jwt_token_global != old_token
-            change_note = "новый" if token_changed else "повторно получен"
-            print(f"[AUTH] JWT токен {change_note} после перезагрузки страницы.", flush=True)
-            return True
-        await asyncio.sleep(0.25)
 
-    print("[AUTH] JWT токен не был получен после перезагрузки страницы.", flush=True)
-    return False
+async def _reload_page_for_accounting_recovery(page, reason: str) -> bool:
+    global page_reload_lock
+
+    if page_reload_lock is None:
+        page_reload_lock = asyncio.Lock()
+
+    async with page_reload_lock:
+        if page.is_closed():
+            return False
+
+        print(f"[ACCOUNTING] Баланс устарел, перезагружаем страницу для восстановления канала ({reason})...", flush=True)
+        try:
+            await page.reload(wait_until="domcontentloaded", timeout=30000)
+        except Exception as e:
+            print(f"[ACCOUNTING] Ошибка перезагрузки страницы при восстановлении accounting_ws: {e}", flush=True)
+            return False
+
+        betting_state["last_accounting_recovery_at"] = datetime.now(timezone.utc).isoformat()
+        betting_state["accounting_recovery_attempts"] = int(betting_state.get("accounting_recovery_attempts", 0) or 0) + 1
+        _update_runtime_snapshot("accounting_recovery", {
+            "accounting_recovery_reason": reason,
+            "accounting_recovery_attempts": betting_state.get("accounting_recovery_attempts"),
+        })
+        return True
 
 def _validate_base_bet(bet_amount: float) -> bool:
     """Проверить, делится ли ставка на 10 нацело"""
@@ -366,6 +405,14 @@ def _init_betting_state(strategy: dict) -> dict:
         "session_balance": 0.0,
         "account_balance": None,  # Баланс из accounting_ws (если получен)
         "account_balance_type": None,
+        "account_balance_updated_at": None,
+        "last_accounting_ws_message_at": None,
+        "last_accounting_ws_opened_at": None,
+        "last_accounting_ws_closed_at": None,
+        "accounting_ws_connected": False,
+        "last_accounting_rejection_reason": None,
+        "last_accounting_recovery_at": None,
+        "accounting_recovery_attempts": 0,
         "pending_expected_bet_drop": 0.0,
         "external_withdrawals_total": 0.0,
         "last_bet_amount": 0.0,
@@ -531,6 +578,15 @@ def _build_runtime_snapshot(event_type: str = "heartbeat", extra: dict | None = 
         "consecutive_losses": betting_state.get("consecutive_losses") if betting_state else 0,
         "session_balance": betting_state.get("session_balance") if betting_state else 0.0,
         "account_balance": betting_state.get("account_balance") if betting_state else None,
+        "account_balance_updated_at": betting_state.get("account_balance_updated_at") if betting_state else None,
+        "last_accounting_ws_message_at": betting_state.get("last_accounting_ws_message_at") if betting_state else None,
+        "last_accounting_ws_opened_at": betting_state.get("last_accounting_ws_opened_at") if betting_state else None,
+        "last_accounting_ws_closed_at": betting_state.get("last_accounting_ws_closed_at") if betting_state else None,
+        "accounting_ws_connected": betting_state.get("accounting_ws_connected") if betting_state else False,
+        "account_balance_is_stale": _is_account_balance_stale() if betting_state else False,
+        "last_accounting_rejection_reason": betting_state.get("last_accounting_rejection_reason") if betting_state else None,
+        "last_accounting_recovery_at": betting_state.get("last_accounting_recovery_at") if betting_state else None,
+        "accounting_recovery_attempts": betting_state.get("accounting_recovery_attempts") if betting_state else 0,
         "total_profit": betting_state.get("total_profit") if betting_state else 0.0,
         "total_bet_amount": betting_state.get("total_bet_amount") if betting_state else 0.0,
         "total_bets_placed": betting_state.get("total_bets_placed") if betting_state else 0,
@@ -540,6 +596,8 @@ def _build_runtime_snapshot(event_type: str = "heartbeat", extra: dict | None = 
         "current_specifier": BET_MODE_SPECIFIER if BET_MODE_ENABLED else None,
         "dynamic_outcome": betting_state.get("dynamic_outcome") if betting_state else None,
         "dynamic_specifier": betting_state.get("dynamic_specifier") if betting_state else None,
+        "dynamic_use_average_value_selection": DYNAMIC_USE_AVERAGE_VALUE_SELECTION,
+        "dynamic_include_double_selection": DYNAMIC_INCLUDE_DOUBLE_SELECTION,
         "dynamic_filter_by_player": DYNAMIC_FILTER_BY_PLAYER,
         "dynamic_filter_by_side": DYNAMIC_FILTER_BY_SIDE,
         "last_bet_amount": betting_state.get("last_bet_amount") if betting_state else 0.0,
@@ -958,6 +1016,10 @@ def _wire_ws_logging(page) -> None:
         is_target = ws.url.startswith(TARGET_WS_URL)
         is_accounting = ws.url.startswith(ACCOUNTING_WS_URL)
         tag = "TARGET-WS" if is_target else "WS"
+        if is_accounting:
+            betting_state["accounting_ws_connected"] = True
+            betting_state["last_accounting_ws_opened_at"] = datetime.now(timezone.utc).isoformat()
+            _update_runtime_snapshot("accounting_ws_open")
         if WS_LOG_ENABLED:
             print(f"[{tag} OPEN] {ws.url}", flush=True)
 
@@ -981,6 +1043,10 @@ def _wire_ws_logging(page) -> None:
                     asyncio.create_task(_process_betting_round(page, payload))
 
         def on_close(*_) -> None:
+            if is_accounting:
+                betting_state["accounting_ws_connected"] = False
+                betting_state["last_accounting_ws_closed_at"] = datetime.now(timezone.utc).isoformat()
+                _update_runtime_snapshot("accounting_ws_close")
             if WS_LOG_ENABLED:
                 print(f"[{tag} CLOSE] {ws.url}", flush=True)
 
@@ -989,6 +1055,32 @@ def _wire_ws_logging(page) -> None:
         ws.on("close", on_close)
 
     page.on("websocket", on_websocket)
+
+
+async def _monitor_accounting_ws_health(page) -> None:
+    while True:
+        await asyncio.sleep(3.0)
+
+        if page.is_closed():
+            return
+
+        last_recovery_age = _get_accounting_age_seconds("last_accounting_recovery_at")
+        if last_recovery_age is not None and last_recovery_age < ACCOUNTING_RECOVERY_COOLDOWN_SECONDS:
+            continue
+
+        ws_age = _get_accounting_age_seconds("last_accounting_ws_message_at")
+        balance_age = _get_accounting_age_seconds("account_balance_updated_at")
+
+        reason = None
+        if betting_state.get("accounting_ws_connected") is False and betting_state.get("last_accounting_ws_closed_at"):
+            reason = "accounting_ws closed"
+        elif _is_account_balance_stale() and balance_age is not None and balance_age >= ACCOUNTING_RECOVERY_RELOAD_SECONDS:
+            reason = f"balance_update stale for {balance_age:.0f}s"
+        elif betting_state.get("account_balance") is not None and ws_age is not None and ws_age >= ACCOUNTING_RECOVERY_RELOAD_SECONDS and float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0) > 0:
+            reason = f"no accounting messages for {ws_age:.0f}s"
+
+        if reason:
+            await _reload_page_for_accounting_recovery(page, reason)
 
 
 def _calculate_roi() -> float:
@@ -1001,11 +1093,48 @@ def _calculate_roi() -> float:
     return (total_profit / total_bet) * 100
 
 
+def _get_accounting_age_seconds(reference_key: str) -> float | None:
+    raw_value = betting_state.get(reference_key)
+    if not raw_value:
+        return None
+    try:
+        timestamp = datetime.fromisoformat(raw_value)
+    except (TypeError, ValueError):
+        return None
+    return max(0.0, (datetime.now(timezone.utc) - timestamp).total_seconds())
+
+
+def _is_account_balance_stale() -> bool:
+    if not betting_state:
+        return False
+    if betting_state.get("account_balance") is None:
+        return False
+    if betting_state.get("accounting_ws_connected") is False and betting_state.get("last_accounting_ws_closed_at"):
+        return True
+
+    pending_drop = float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0)
+    if pending_drop <= 0:
+        return False
+
+    age_seconds = _get_accounting_age_seconds("account_balance_updated_at")
+    if age_seconds is None:
+        return True
+    return age_seconds >= ACCOUNTING_BALANCE_STALE_SECONDS
+
+
+def _record_accounting_rejection(reason: str, payload_preview: str | None = None) -> None:
+    betting_state["last_accounting_rejection_reason"] = reason
+    if ACCOUNTING_DEBUG_REJECTED_MESSAGES or BET_DEBUG_ENABLED:
+        preview = f" | payload={payload_preview[:220]}" if payload_preview else ""
+        print(f"[ACCOUNTING][SKIP] {reason}{preview}", flush=True)
+
+
 def _get_balance_for_log() -> str:
     """Вернуть баланс для логов: приоритет у real-time balance из accounting_ws."""
     account_balance = betting_state.get("account_balance")
     if account_balance is not None:
-        return f"{account_balance:.0f}р"
+        suffix = " !" if _is_account_balance_stale() else ""
+        return f"{account_balance:.0f}р{suffix}"
     return f"{betting_state.get('session_balance', 0):.0f}р"
 
 
@@ -1016,17 +1145,24 @@ def _update_balance_from_accounting_payload(payload: object) -> None:
         payload_text = _format_ws_payload(payload)
         data = json.loads(payload_text)
     except Exception:
+        _record_accounting_rejection("payload is not valid JSON")
         return
 
+    betting_state["last_accounting_ws_message_at"] = datetime.now(timezone.utc).isoformat()
+
     if not isinstance(data, dict):
+        _record_accounting_rejection("payload root is not an object", payload_text)
         return
     if data.get("type") != "balance_update":
+        _record_accounting_rejection(f"ignored message type={data.get('type')}", payload_text)
         return
 
     balance_update = data.get("balance_update")
     if not isinstance(balance_update, dict):
+        _record_accounting_rejection("balance_update field is missing or not an object", payload_text)
         return
     if balance_update.get("code") != 200:
+        _record_accounting_rejection(f"balance_update.code={balance_update.get('code')}", payload_text)
         return
 
     # По фактическим payload в этой сессии денежный баланс приходит как balance_type=1.
@@ -1035,13 +1171,16 @@ def _update_balance_from_accounting_payload(payload: object) -> None:
     try:
         normalized_balance_type = int(balance_type)
     except (TypeError, ValueError):
+        _record_accounting_rejection(f"invalid balance_type={balance_type}", payload_text)
         return
 
     if normalized_balance_type != 1:
+        _record_accounting_rejection(f"ignored balance_type={normalized_balance_type}", payload_text)
         return
 
     value = balance_update.get("value")
     if not isinstance(value, (int, float)):
+        _record_accounting_rejection(f"non-numeric balance value={value}", payload_text)
         return
 
     new_balance = float(value)
@@ -1064,6 +1203,8 @@ def _update_balance_from_accounting_payload(payload: object) -> None:
     betting_state["pending_expected_bet_drop"] = pending_expected_bet_drop
     betting_state["account_balance"] = new_balance
     betting_state["account_balance_type"] = normalized_balance_type
+    betting_state["account_balance_updated_at"] = datetime.now(timezone.utc).isoformat()
+    betting_state["last_accounting_rejection_reason"] = None
     _update_runtime_snapshot("balance_update", {
         "account_balance": new_balance,
         "withdrawal_detected": withdrawal_detected,
@@ -1897,13 +2038,19 @@ def _analyze_all_results_frequency() -> dict:
 
 def _get_best_combination(stats: dict | None = None) -> tuple[str, str]:
     """
-    Найти лучшую комбинацию на основе частоты выпадений из последних N результатов БД
-    (анализирует ВСЕ выпадения, не только размещённые ставки)
+    Найти лучшую комбинацию для динамической ставки.
+
+    Для red/yellow выбираем значение, ближайшее к среднему значению кубика
+    этого цвета за окно анализа. Для double оставляем отдельного кандидата,
+    потому что у дубля нет собственного "среднего значения".
+
+    Итоговый выбор делается между тремя кандидатами:
+    - red_<rounded mean>
+    - yellow_<rounded mean>
+    - double
+
+    Побеждает кандидат с наибольшей частотой выпадения в окне.
     Возвращает кортеж (outcome, specifier): ("red", "3"), ("yellow", "5"), ("double", "")
-    
-    Критерии выбора (в порядке приоритета):
-    1. Наивысшая frequency (частота выпадений)
-    2. Если frequency одинакова - комбинация с больше выпадений (более надежная)
     """
     if stats is None:
         # Анализировать только фактические выпадения из БД, а не размещённые ставки.
@@ -1912,25 +2059,98 @@ def _get_best_combination(stats: dict | None = None) -> tuple[str, str]:
     if not stats:
         return (BET_MODE_OUTCOME, BET_MODE_SPECIFIER)
 
-    # Найти комбинацию с наивысшей frequency (частотой выпадений)
-    best_combo = max(stats.items(), key=lambda x: (
-        x[1]["frequency"],           # Главный критерий: frequency (частота выпадений)
-        x[1]["freq"]                 # Tie-breaker: абсолютное число выпадений
-    ))
-    
-    combo_key = best_combo[0]
-    
-    if BET_DEBUG_ENABLED:
-        freq = best_combo[1]["frequency"]
-        freq_count = best_combo[1]["freq"]
-        print(f"[DEBUG] Best combo by frequency: {combo_key} (freq={freq:.1f}%, count={freq_count})", flush=True)
-    
-    if combo_key == "double":
-        return ("double", "")
-    else:
-        # Распарсить "red_3" → ("red", "3")
+    selectable_stats = dict(stats)
+    if not DYNAMIC_INCLUDE_DOUBLE_SELECTION:
+        selectable_stats.pop("double", None)
+
+    if not selectable_stats:
+        return (BET_MODE_OUTCOME, BET_MODE_SPECIFIER)
+
+    if not DYNAMIC_USE_AVERAGE_VALUE_SELECTION:
+        best_combo = max(selectable_stats.items(), key=lambda x: (
+            x[1]["frequency"],
+            x[1]["freq"],
+        ))
+
+        combo_key = best_combo[0]
+
+        if BET_DEBUG_ENABLED:
+            freq = best_combo[1]["frequency"]
+            freq_count = best_combo[1]["freq"]
+            print(f"[DEBUG DYNAMIC] Average selection disabled; best combo by frequency: {combo_key} (freq={freq:.1f}%, count={freq_count})", flush=True)
+
+        if combo_key == "double":
+            return ("double", "")
+
         parts = combo_key.split("_")
         return (parts[0], parts[1])
+
+    candidates: list[tuple[str, dict]] = []
+
+    for color in ("red", "yellow"):
+        weighted_sum = 0
+        total_hits = 0
+
+        for value in range(1, 7):
+            combo_key = f"{color}_{value}"
+            combo_stats = stats.get(combo_key)
+            if not combo_stats:
+                continue
+            freq_count = int(combo_stats.get("freq", 0) or 0)
+            weighted_sum += value * freq_count
+            total_hits += freq_count
+
+        if total_hits <= 0:
+            continue
+
+        avg_value = weighted_sum / total_hits
+        rounded_value = max(1, min(6, int(avg_value + 0.5)))
+        candidate_key = f"{color}_{rounded_value}"
+        candidate_stats = stats.get(candidate_key, {"freq": 0, "frequency": 0.0})
+        candidates.append((candidate_key, {
+            "freq": int(candidate_stats.get("freq", 0) or 0),
+            "frequency": float(candidate_stats.get("frequency", 0.0) or 0.0),
+            "avg_value": avg_value,
+            "rounded_value": rounded_value,
+        }))
+
+    if DYNAMIC_INCLUDE_DOUBLE_SELECTION and "double" in selectable_stats:
+        double_stats = selectable_stats["double"]
+        candidates.append(("double", {
+            "freq": int(double_stats.get("freq", 0) or 0),
+            "frequency": float(double_stats.get("frequency", 0.0) or 0.0),
+            "avg_value": None,
+            "rounded_value": None,
+        }))
+
+    if not candidates:
+        return (BET_MODE_OUTCOME, BET_MODE_SPECIFIER)
+
+    best_combo = max(candidates, key=lambda x: (
+        x[1]["frequency"],
+        x[1]["freq"],
+    ))
+
+    combo_key = best_combo[0]
+
+    if BET_DEBUG_ENABLED:
+        for candidate_key, candidate_data in candidates:
+            if candidate_key == "double":
+                print(
+                    f"[DEBUG DYNAMIC] candidate={candidate_key} freq={candidate_data['frequency']:.1f}% count={candidate_data['freq']}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[DEBUG DYNAMIC] candidate={candidate_key} avg={candidate_data['avg_value']:.2f} rounded={candidate_data['rounded_value']} freq={candidate_data['frequency']:.1f}% count={candidate_data['freq']}",
+                    flush=True,
+                )
+
+    if combo_key == "double":
+        return ("double", "")
+
+    parts = combo_key.split("_")
+    return (parts[0], parts[1])
 
 
 def _update_dynamic_bet() -> None:
@@ -2069,7 +2289,7 @@ async def _wait_for_exit_signal() -> None:
 
 
 async def main() -> None:
-    global loaded_strategies, current_strategy, betting_state
+    global loaded_strategies, current_strategy, betting_state, page_reload_lock
     
     SESSION_DIR.mkdir(parents=True, exist_ok=True)
     
@@ -2108,6 +2328,10 @@ async def main() -> None:
             print("\n[DYNAMIC] 🔄 ДИНАМИЧЕСКИЙ РЕЖИМ ВКЛЮЧЕН", flush=True)
             print(f"[DYNAMIC] Окно анализа: {DYNAMIC_WINDOW_SIZE} ставок", flush=True)
             print(f"[DYNAMIC] Пересчет: каждые {DYNAMIC_RECALC_INTERVAL} ставок", flush=True)
+            print(f"[DYNAMIC] Выбор по среднему значению: {'ON' if DYNAMIC_USE_AVERAGE_VALUE_SELECTION else 'OFF'}", flush=True)
+            print(f"[DYNAMIC] Учитывать double: {'ON' if DYNAMIC_INCLUDE_DOUBLE_SELECTION else 'OFF'}", flush=True)
+            print(f"[DYNAMIC] Фильтр по игроку: {'ON' if DYNAMIC_FILTER_BY_PLAYER else 'OFF'}", flush=True)
+            print(f"[DYNAMIC] Фильтр по стороне: {'ON' if DYNAMIC_FILTER_BY_SIDE else 'OFF'}", flush=True)
             print(f"[DYNAMIC] Начальная ставка: {_format_outcome_pretty(BET_MODE_OUTCOME, BET_MODE_SPECIFIER)}", flush=True)
 
     args = [
@@ -2133,11 +2357,13 @@ async def main() -> None:
         ]
 
     playwright = await async_playwright().start()
+    page_reload_lock = asyncio.Lock()
     context = await playwright.chromium.launch_persistent_context(
         user_data_dir=str(SESSION_DIR),
         headless=HEADLESS,
         args=args,
     )
+    accounting_monitor_task = None
     try:
         for existing_page in context.pages:
             _wire_ws_logging(existing_page)
@@ -2150,6 +2376,7 @@ async def main() -> None:
         
         print("[DEBUG] Поиск JWT токена в ответах...", flush=True)
         await page.goto("https://betboom.ru/game/nardsgame")
+        accounting_monitor_task = asyncio.create_task(_monitor_accounting_ws_health(page))
         
         status_line = "Браузер открыт. Профиль сессии: {}\n".format(SESSION_DIR)
         if BET_MODE_ENABLED:
@@ -2159,11 +2386,19 @@ async def main() -> None:
             status_line += "  - Базовая ставка: {}р\n".format(BASE_BET)
             status_line += "  - Коэффициентов в прогрессии: {}\n".format(len(current_strategy['coefficients']))
             status_line += "  - Задержка перед ставкой: {:.1f}-{:.1f}с\n".format(BET_DELAY_MIN, BET_DELAY_MAX)
+        status_line += "  - Accounting stale timeout: {:.0f}с\n".format(ACCOUNTING_BALANCE_STALE_SECONDS)
+        status_line += "  - Accounting recovery reload: {:.0f}с\n".format(ACCOUNTING_RECOVERY_RELOAD_SECONDS)
         status_line += "Закройте окно браузера или нажмите Enter здесь - сессия сохранится."
         
         print(status_line, flush=True)
         await _wait_for_exit_signal()
     finally:
+        if accounting_monitor_task is not None:
+            accounting_monitor_task.cancel()
+            try:
+                await accounting_monitor_task
+            except asyncio.CancelledError:
+                pass
         await context.close()
         await playwright.stop()
 
