@@ -12,10 +12,14 @@ import os
 import sys
 import random
 import re
+import threading
 import importlib.util
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
+from aiogram import Bot, Dispatcher, Router
+from aiogram.filters import Command
+from aiogram.types import Message
 from patchright.async_api import async_playwright
 import psycopg2
 from psycopg2.extras import Json
@@ -68,6 +72,17 @@ ACCOUNTING_RECOVERY_RELOAD_SECONDS = float(os.getenv("ACCOUNTING_RECOVERY_RELOAD
 ACCOUNTING_RECOVERY_COOLDOWN_SECONDS = float(os.getenv("ACCOUNTING_RECOVERY_COOLDOWN_SECONDS", "30"))
 ACCOUNTING_DEBUG_REJECTED_MESSAGES = os.getenv("ACCOUNTING_DEBUG_REJECTED_MESSAGES", "false").lower() in {"1", "true", "yes", "on"}
 
+# Telegram notifications
+TELEGRAM_NOTIFICATIONS_ENABLED = os.getenv("TELEGRAM_NOTIFICATIONS_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_REQUEST_TIMEOUT_SECONDS = float(os.getenv("TELEGRAM_REQUEST_TIMEOUT_SECONDS", "5"))
+TELEGRAM_NOTIFICATION_COOLDOWN_SECONDS = float(os.getenv("TELEGRAM_NOTIFICATION_COOLDOWN_SECONDS", "60"))
+TELEGRAM_NOTIFY_WITHDRAWALS = os.getenv("TELEGRAM_NOTIFY_WITHDRAWALS", "true").lower() in {"1", "true", "yes", "on"}
+TELEGRAM_NOTIFY_ACCOUNTING_ISSUES = os.getenv("TELEGRAM_NOTIFY_ACCOUNTING_ISSUES", "true").lower() in {"1", "true", "yes", "on"}
+TELEGRAM_NOTIFY_BET_ERRORS = os.getenv("TELEGRAM_NOTIFY_BET_ERRORS", "true").lower() in {"1", "true", "yes", "on"}
+TELEGRAM_NOTIFY_AUTH_ISSUES = os.getenv("TELEGRAM_NOTIFY_AUTH_ISSUES", "true").lower() in {"1", "true", "yes", "on"}
+
 # Случайная задержка перед ставкой (в секундах)
 BET_DELAY_MIN = float(os.getenv("BET_DELAY_MIN", "0.8"))
 BET_DELAY_MAX = float(os.getenv("BET_DELAY_MAX", "1.5"))
@@ -95,6 +110,70 @@ loaded_strategies = {}
 current_strategy = None
 jwt_token_global = None  # Глобальное хранилище найденного JWT токена
 page_reload_lock: asyncio.Lock | None = None
+telegram_notification_timestamps: dict[str, float] = {}
+
+
+def _is_telegram_chat_id_mode() -> bool:
+    if len(sys.argv) < 2:
+        return False
+    return sys.argv[1].strip().lower() in {"telegram-chat-id", "telegram_chat_id", "tg-chat-id", "tg_chat_id"}
+
+
+async def _send_telegram_notification_async(title: str, message: str) -> None:
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    try:
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=f"{title}\n{message}",
+            disable_web_page_preview=True,
+        )
+    finally:
+        await bot.session.close()
+
+
+async def _run_telegram_chat_id_helper() -> None:
+    if not TELEGRAM_BOT_TOKEN:
+        print("[TELEGRAM] TELEGRAM_BOT_TOKEN не задан. Заполните его в .env и повторите команду.", flush=True)
+        return
+
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    dp = Dispatcher()
+    router = Router()
+
+    @router.message(Command("start", "chatid", "id"))
+    async def handle_chat_id_command(message: Message) -> None:
+        chat_id = str(message.chat.id)
+        chat_type = message.chat.type
+        chat_title = getattr(message.chat, "title", None) or getattr(message.chat, "full_name", None) or "-"
+        username = message.from_user.username if message.from_user else None
+
+        print(
+            f"[TELEGRAM] chat_id={chat_id} type={chat_type} title={chat_title} username={username or '-'}",
+            flush=True,
+        )
+        await message.answer(
+            "Ваш TELEGRAM_CHAT_ID:\n"
+            f"{chat_id}\n\n"
+            f"Тип чата: {chat_type}\n"
+            f"Название: {chat_title}\n\n"
+            "Добавьте в .env:\n"
+            f"TELEGRAM_CHAT_ID={chat_id}"
+        )
+
+    @router.message()
+    async def handle_any_message(message: Message) -> None:
+        await handle_chat_id_command(message)
+
+    dp.include_router(router)
+
+    print("[TELEGRAM] Режим получения TELEGRAM_CHAT_ID запущен.", flush=True)
+    print("[TELEGRAM] Напишите боту /chatid или любое сообщение, чтобы получить chat_id.", flush=True)
+
+    try:
+        await bot.delete_webhook(drop_pending_updates=False)
+        await dp.start_polling(bot, handle_signals=True)
+    finally:
+        await bot.session.close()
 
 
 def _handle_response(response):
@@ -274,10 +353,22 @@ async def _reload_page_for_accounting_recovery(page, reason: str) -> bool:
             return False
 
         print(f"[ACCOUNTING] Баланс устарел, перезагружаем страницу для восстановления канала ({reason})...", flush=True)
+        _queue_telegram_notification(
+            "[BuyBayBye] Проблема с accounting balance",
+            f"Запущено восстановление accounting_ws.\nПричина: {reason}\nПоследний real balance: {_get_balance_for_log()}",
+            dedup_key=f"accounting_recovery_start:{reason}",
+            enabled=TELEGRAM_NOTIFY_ACCOUNTING_ISSUES,
+        )
         try:
             await page.reload(wait_until="domcontentloaded", timeout=30000)
         except Exception as e:
             print(f"[ACCOUNTING] Ошибка перезагрузки страницы при восстановлении accounting_ws: {e}", flush=True)
+            _queue_telegram_notification(
+                "[BuyBayBye] Ошибка восстановления accounting_ws",
+                f"Page reload завершился ошибкой.\nПричина: {reason}\nОшибка: {e}",
+                dedup_key=f"accounting_recovery_error:{reason}",
+                enabled=TELEGRAM_NOTIFY_ACCOUNTING_ISSUES,
+            )
             return False
 
         betting_state["last_accounting_recovery_at"] = datetime.now(timezone.utc).isoformat()
@@ -286,6 +377,12 @@ async def _reload_page_for_accounting_recovery(page, reason: str) -> bool:
             "accounting_recovery_reason": reason,
             "accounting_recovery_attempts": betting_state.get("accounting_recovery_attempts"),
         })
+        _queue_telegram_notification(
+            "[BuyBayBye] accounting_ws восстановлен",
+            f"Перезагрузка страницы завершилась успешно.\nПричина: {reason}\nТекущий real balance: {_get_balance_for_log()}",
+            dedup_key=f"accounting_recovery_success:{reason}",
+            enabled=TELEGRAM_NOTIFY_ACCOUNTING_ISSUES,
+        )
         return True
 
 def _validate_base_bet(bet_amount: float) -> bool:
@@ -914,6 +1011,12 @@ async def _place_bet(page, outcome: str, specifier: str, amount: float, allow_re
                         conn.close()
                         print("[AUTH] Повторяем ставку один раз после обновления токена.", flush=True)
                         return await _place_bet(page, outcome, requested_specifier, amount, allow_refresh_retry=False)
+                    _queue_telegram_notification(
+                        "[BuyBayBye] Ошибка авторизации ставки",
+                        f"403 FORBIDDEN, обновление JWT не помогло.\nСтавка: {_format_outcome_pretty(outcome, requested_specifier)}\nСумма: {amount:.0f}р",
+                        dedup_key="auth_refresh_failed",
+                        enabled=TELEGRAM_NOTIFY_AUTH_ISSUES,
+                    )
 
                 roi = _calculate_roi()
                 log_line = _format_bet_log(
@@ -973,6 +1076,12 @@ async def _place_bet(page, outcome: str, specifier: str, amount: float, allow_re
                 bets_count=str(betting_state.get('total_bets_placed', 0)).zfill(3)
             )
             print(log_line, flush=True)
+            _queue_telegram_notification(
+                "[BuyBayBye] Ошибка сохранения ставки",
+                f"Не удалось записать ставку в БД.\nСтавка: {_format_outcome_pretty(outcome, specifier)}\nСумма: {amount:.0f}р\nОшибка: {str(e)[:300]}",
+                dedup_key="bet_db_error",
+                enabled=TELEGRAM_NOTIFY_BET_ERRORS,
+            )
             _update_runtime_snapshot("bet_db_error", {
                 "last_set_status": betting_state.get("last_set_status"),
                 "last_set_error": betting_state.get("last_set_error"),
@@ -999,6 +1108,12 @@ async def _place_bet(page, outcome: str, specifier: str, amount: float, allow_re
             bets_count=str(betting_state.get('total_bets_placed', 0)).zfill(3)
         )
         print(log_line, flush=True)
+        _queue_telegram_notification(
+            "[BuyBayBye] Ошибка запроса ставки",
+            f"Запрос на размещение ставки завершился ошибкой.\nСтавка: {_format_outcome_pretty(outcome, requested_specifier)}\nСумма: {amount:.0f}р\nОшибка: {str(e)[:300]}",
+            dedup_key="bet_request_error",
+            enabled=TELEGRAM_NOTIFY_BET_ERRORS,
+        )
         old_step, max_steps, restarted = _advance_step_after_set_error()
         if BET_DEBUG_ENABLED:
             new_step = betting_state.get("current_step", 0)
@@ -1129,6 +1244,33 @@ def _record_accounting_rejection(reason: str, payload_preview: str | None = None
         print(f"[ACCOUNTING][SKIP] {reason}{preview}", flush=True)
 
 
+def _send_telegram_notification_sync(title: str, message: str) -> None:
+    if not TELEGRAM_NOTIFICATIONS_ENABLED or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+
+    try:
+        asyncio.run(_send_telegram_notification_async(title, message))
+    except Exception as e:
+        print(f"[TELEGRAM] Ошибка отправки уведомления: {e}", flush=True)
+
+
+def _queue_telegram_notification(title: str, message: str, dedup_key: str, enabled: bool = True) -> None:
+    if not enabled or not TELEGRAM_NOTIFICATIONS_ENABLED or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+
+    now_ts = datetime.now(timezone.utc).timestamp()
+    last_ts = telegram_notification_timestamps.get(dedup_key)
+    if last_ts is not None and now_ts - last_ts < TELEGRAM_NOTIFICATION_COOLDOWN_SECONDS:
+        return
+
+    telegram_notification_timestamps[dedup_key] = now_ts
+    threading.Thread(
+        target=_send_telegram_notification_sync,
+        args=(title, message),
+        daemon=True,
+    ).start()
+
+
 def _get_balance_for_log() -> str:
     """Вернуть баланс для логов: приоритет у real-time balance из accounting_ws."""
     account_balance = betting_state.get("account_balance")
@@ -1199,6 +1341,12 @@ def _update_balance_from_accounting_payload(payload: object) -> None:
             betting_state["session_balance"] -= withdrawal_amount
             betting_state["external_withdrawals_total"] = betting_state.get("external_withdrawals_total", 0.0) + withdrawal_amount
             print(f"[ACCOUNTING] Обнаружен вывод: -{withdrawal_amount:.0f}р, session_balance скорректирован до {betting_state['session_balance']:.0f}р", flush=True)
+            _queue_telegram_notification(
+                "[BuyBayBye] Обнаружен вывод средств",
+                f"Accounting balance уменьшился вне ожидаемого списания ставки.\nСумма вывода: {withdrawal_amount:.0f}р\nНовый real balance: {new_balance:.0f}р\nSession balance: {betting_state['session_balance']:.0f}р",
+                dedup_key="withdrawal_detected",
+                enabled=TELEGRAM_NOTIFY_WITHDRAWALS,
+            )
 
     betting_state["pending_expected_bet_drop"] = pending_expected_bet_drop
     betting_state["account_balance"] = new_balance
@@ -2411,6 +2559,9 @@ async def main() -> None:
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        if _is_telegram_chat_id_mode():
+            asyncio.run(_run_telegram_chat_id_helper())
+        else:
+            asyncio.run(main())
     except KeyboardInterrupt:
         sys.exit(130)
