@@ -70,9 +70,14 @@ class AuthRuntimeService:
             color_reset=self.runtime_config.colors.reset,
         )
 
-    def subscribe_jwt_search_to_page(self, page) -> None:
-        """Подписать страницу на поиск JWT в запросах и ответах браузера."""
 
+    def subscribe_jwt_search_to_page(self, page) -> None:
+        """Подписать страницу на поиск JWT в запросах и ответах браузера, только если профиль существует."""
+        import os
+        profile_dir = str(self.runtime_config.browser.session_dir)
+        if not os.path.exists(profile_dir):
+            print(f"[WARN] Папка профиля браузера '{profile_dir}' не найдена, поиск токена не будет активирован.", flush=True)
+            return
         _jwt_subscribe_jwt_search_to_page(page, response_handler=self.handle_response, request_handler=self.handle_request)
 
     def is_forbidden_access_error(self, status_code: int, response_text: str) -> bool:
