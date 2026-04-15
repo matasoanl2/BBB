@@ -47,6 +47,7 @@ COPY dashboard/app.py ./dashboard/app.py
 COPY dashboard/templates ./dashboard/templates
 COPY dashboard_templates/ ./dashboard_templates/
 COPY strategies/ ./strategies/
+COPY scripts ./scripts
 RUN mkdir -p /app/profile
 
 CMD ["python", "-u", "main.py"]

@@ -6,6 +6,7 @@ postgres_data/
 
 # Browser Profile
 profile/
+profile_docker/
 profile_backups/
 
 # Exports files

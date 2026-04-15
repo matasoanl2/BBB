@@ -31,7 +31,7 @@ services:
       DB_HOST: postgres
       HEADLESS: "true"
     volumes:
-      - ./profile:/app/profile
+      - ./profile_docker:/app/profile
       - ./strategies:/app/strategies:ro
     shm_size: "1gb"
     stdin_open: true
