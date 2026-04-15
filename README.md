@@ -4,12 +4,13 @@
 
 ## 📋 Описание
 
-Проект состоит из трёх основных компонентов:
+Проект состоит из нескольких основных компонентов:
 
-1. **main.py** — автоматизация браузера для сбора реальных данных в PostgreSQL
-2. **analys.py** — симуляция беттинговой стратегии на основе данных из БД
-3. **import_export.py** — импорт из JSON и экспорт в JSON файлы (по 100МБ)
-4. **dashboard.py** — FastAPI дашборд для live-состояния, ставок, раундов и балансов
+1. **main.py** — тонкий runtime entrypoint: собирает рантайм и передаёт управление модульному приложению внутри `buybaybye/`
+2. **dashboard.py** — совместимая обёртка над `dashboard/app.py` для FastAPI дашборда live-состояния, ставок, раундов и балансов
+3. **analys_comprehensive.py** и **compare_strategies.py** — совместимые analysis-обёртки в корне проекта; реальные реализации находятся в `scripts/analysis/`
+4. **import_export.py** — совместимая data-обёртка; реальная реализация находится в `scripts/data/`
+5. **save_profile.py** — совместимая profile-обёртка; реальная реализация находится в `scripts/profile/`
 
 ## 🗄️ Упор на PostgreSQL
 
@@ -63,9 +64,16 @@
 
 ## 🔧 Компоненты проекта
 
-### dashboard.py — веб-дашборд поверх PostgreSQL
+### dashboard.py / dashboard/app.py — веб-дашборд поверх PostgreSQL
 
-Отдельный FastAPI сервис для наблюдения за рантаймом и историей:
+Отдельный FastAPI сервис для наблюдения за рантаймом и историей.
+
+- Реальное FastAPI приложение теперь живёт в `dashboard/app.py`
+- Файл `dashboard.py` сохранён как совместимая обёртка, чтобы старый запуск не ломался
+- HTML шаблоны находятся в `dashboard/templates/`
+- Команда запуска `uvicorn dashboard:app --host 0.0.0.0 --port 8000` по-прежнему работает
+
+Функции дашборда:
 
 - Показывает текущий `runtime_snapshot` (стратегия, шаг, session balance, real balance)
 - Читает последние ставки из `bet_history`
@@ -100,6 +108,15 @@ http://localhost:8000
 - **Случайная задержка** перед ставкой (BET_DELAY_MIN-MAX) для "человеческого" поведения
 - Поддерживает постоянную сессию браузера (профиль в папке `profile/`)
 - Headless режим через переменную окружения `HEADLESS`
+
+#### Внутренний layout рантайма
+
+Runtime теперь организован по подпапкам внутри `buybaybye/`:
+
+- `buybaybye/core/` — сборка рантайма, конфигурация, контекст и жизненный цикл приложения
+- `buybaybye/services/` — сервисный слой рантайма для auth, accounting, betting и infrastructure
+- `buybaybye/modules/` — прикладные модули и подсистемы, используемые рантаймом
+- Плоские файлы `buybaybye/*.py` сохранены как совместимые обёртки для старых импортов и переходного периода
 
 #### 🔐 Автоматическое обнаружение JWT токена
 
@@ -412,28 +429,14 @@ ACCOUNTING_DEBUG_REJECTED_MESSAGES=false
 5. Размещается новая ставка на следующий раунд
 6. История всех ставок сохраняется в таблице `bet_history`
 
-### analys.py — Анализатор стратегии из PostgreSQL
+### Скрипты анализа — совместимые root-обёртки поверх scripts/analysis/
 
-Симулирует беттинговую стратегию на реальных данных из БД:
+Аналитические CLI-скрипты вынесены в `scripts/analysis/`, а корневые файлы сохранены как совместимые обёртки:
 
-**Параметры стратегии:**
-- **Целевой результат:** красный кубик со значением 3
-- **Коэффициент выплаты:** 5.7x
-- **Начальный баланс:** 10,000р
-- **Последовательность ставок (Martingale-подобная):**
-  ```
-  [10, 10, 10, 10, 10, 15, 15, 20, 25, 30, 35, 45, 55, 65, 80]
-  ```
+- `analys_comprehensive.py` → `scripts/analysis/analys_comprehensive.py`
+- `compare_strategies.py` → `scripts/analysis/compare_strategies.py`
 
-**Логика симуляции:**
-1. На каждый раунд игры делается ставка по текущему шагу
-2. Если выпадает красный = 3: ставка * 5.7, баланс пополняется, цикл начинается с шага 1
-3. Если не выпадает: баланс уменьшается на размер ставки, переход к следующему шагу
-4. После 15-го шага (если не было выигрыша): цикл рестартует
-
-**Выведение:**
-- Детальный лог каждой ставки с временем, игроком, результатом и балансом
-- Статистика: побед, win rate, макс. losing streak, ROI
+Это позволяет сохранить привычные команды запуска из корня проекта и из контейнера без изменения пользовательского workflow.
 
 ### analys_comprehensive.py — Полный анализ всех комбинаций и стратегий
 
@@ -829,7 +832,7 @@ docker-compose logs -f app | grep -E "(STRATEGY|BET|RES)"
 
 ```bash
 # Запустить анализ
-docker-compose exec app python analys.py
+docker-compose exec app python analys_comprehensive.py
 
 # Экспортировать в JSON
 docker-compose exec app python import_export.py export ./exports
@@ -1055,11 +1058,24 @@ python main.py
 
 ```
 BuyBayBye/
-├── main.py                      # Сборщик WebSocket данных → PostgreSQL
-├── analys.py                    # Анализатор стратегии из PostgreSQL
-├── analys_comprehensive.py      # Полный анализ всех комбинаций и стратегий
-├── import_export.py             # Импорт/Экспорт JSON ↔ PostgreSQL
-├── save_profile.py              # Сохранение/восстановление профиля браузера
+├── main.py                      # Тонкий entrypoint рантайма
+├── dashboard.py                 # Совместимая обёртка над dashboard/app.py
+├── analys_comprehensive.py      # Совместимая analysis-обёртка
+├── compare_strategies.py        # Совместимая analysis-обёртка
+├── import_export.py             # Совместимая data-обёртка
+├── save_profile.py              # Совместимая profile-обёртка
+├── dashboard/
+│   ├── app.py                   # Реальное FastAPI приложение дашборда
+│   └── templates/               # HTML шаблоны дашборда
+├── buybaybye/
+│   ├── core/                    # Runtime core: app/config/context/factory
+│   ├── services/                # Runtime service layer
+│   ├── modules/                 # Подсистемы и прикладные модули
+│   └── *.py                     # Плоские совместимые обёртки переходного периода
+├── scripts/
+│   ├── analysis/                # Реальные analysis CLI-скрипты
+│   ├── data/                    # Реальные data CLI-скрипты
+│   └── profile/                 # Реальные profile CLI-скрипты
 ├── strategies/                  # Папка со стратегиями (18 YAML файлов)
 ├── .github/agents/              # Кастомные агенты Copilot для workspace
 ├── .github/hooks/               # Hooks для подтверждённого restart workflow
@@ -1073,6 +1089,8 @@ BuyBayBye/
 ├── target_ws_messages.json      # (deprecated) Для импорта старых данных
 └── README.md                    # Этот файл
 ```
+
+Корневые файлы `dashboard.py`, `analys_comprehensive.py`, `compare_strategies.py`, `import_export.py` и `save_profile.py` сохранены как совместимые обёртки, чтобы существующие команды запуска и автоматизация продолжали работать без изменений.
 
 ## 🔄 Миграция со старого формата (JSON)
 
