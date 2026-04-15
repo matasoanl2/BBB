@@ -1,3 +1,5 @@
+"""Вспомогательные функции для размещения ставок и обработки результатов раундов."""
+
 from __future__ import annotations
 
 import asyncio
@@ -32,6 +34,8 @@ def format_bet_log(
     pad_width_center_func,
     format_result_pretty_func,
 ) -> str:
+    """Собрать форматированную строку лога для SET/RES событий ставки."""
+
     time_str = datetime.now().strftime("%H:%M:%S")
     reset_full = color_reset
     result_col_width = 13
@@ -108,6 +112,8 @@ def format_bet_log(
 
 
 def calculate_bet_amount(*, base_bet: float, runtime_context: RuntimeContext) -> float:
+    """Рассчитать размер следующей ставки по текущему шагу стратегии."""
+
     if not runtime_context.current_strategy or not runtime_context.betting_state:
         return base_bet
 
@@ -142,6 +148,8 @@ async def place_bet(
     update_runtime_snapshot_func,
     queue_telegram_notification_func,
 ) -> bool:
+    """Разместить ставку через HTTP API и обновить runtime state по результату запроса."""
+
     betting_state = runtime_context.betting_state
     current_strategy = runtime_context.current_strategy
     jwt_token = runtime_context.jwt_token

@@ -1,6 +1,4 @@
-"""
-Скрипт для импорта данных из JSON в PostgreSQL и экспорта в JSON по частям (до 100МБ)
-"""
+"""Импортировать JSON game data в PostgreSQL и экспортировать обратно по частям."""
 import json
 import os
 import sys
@@ -27,7 +25,8 @@ MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 МБ в байтах
 
 
 def get_db_connection():
-    """Получить подключение к PostgreSQL"""
+    """Вернуть подключение к PostgreSQL для операций импорта и экспорта."""
+
     conn = psycopg2.connect(
         user=DB_USER,
         password=DB_PASSWORD,
@@ -39,7 +38,8 @@ def get_db_connection():
 
 
 def init_db():
-    """Инициализировать таблицу БД"""
+    """Убедиться, что минимальная game-results schema существует перед импортом."""
+
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -63,12 +63,7 @@ def init_db():
 
 
 def import_from_json(json_file: str, skip_duplicates_check: bool = True):
-    """Импортировать данные из JSON файла в PostgreSQL
-    
-    Args:
-        json_file: Путь к JSON файлу для импорта
-        skip_duplicates_check: Если False, пропускает проверку дубликатов через timestamp
-    """
+    """Импортировать game results из JSON-файла в PostgreSQL."""
     json_path = Path(json_file)
     
     if not json_path.exists():
@@ -161,7 +156,8 @@ def import_from_json(json_file: str, skip_duplicates_check: bool = True):
 
 
 def export_to_json_chunked(output_dir: str = "."):
-    """Экспортировать данные из PostgreSQL в JSON файлы по 100МБ"""
+    """Экспортировать game results из PostgreSQL в chunked JSON-файлы до 100 МБ."""
+
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
@@ -249,6 +245,8 @@ def export_to_json_chunked(output_dir: str = "."):
 
 
 def main():
+    """CLI-точка входа для сценария импорта и экспорта JSON."""
+
     if len(sys.argv) < 2:
         print("Использование:")
         print("  python import_export.py import <json_file> [--skip-duplicates]  - Импортировать JSON в БД")

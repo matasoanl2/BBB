@@ -1,3 +1,5 @@
+"""Привязка browser websocket к target- и accounting-каналам."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -18,11 +20,15 @@ def wire_ws_logging(
     save_target_ws_message_func,
     process_betting_round_func,
 ) -> None:
+    """Подключить обработчики websocket для target- и accounting-каналов страницы."""
+
     betting_state = runtime_context.betting_state
     browser_config = runtime_config.browser
     ws_log_enabled = runtime_config.logging.ws_log_enabled
 
     def on_websocket(ws) -> None:
+        """Обработать открытие нового websocket и привязать события фреймов."""
+
         is_target = ws.url.startswith(browser_config.target_ws_url)
         is_accounting = ws.url.startswith(browser_config.accounting_ws_url)
         tag = "TARGET-WS" if is_target else "WS"
@@ -34,10 +40,14 @@ def wire_ws_logging(
             print(f"[{tag} OPEN] {ws.url}", flush=True)
 
         def on_sent(payload) -> None:
+            """Вывести исходящий websocket frame в лог при включенном tracing."""
+
             if ws_log_enabled:
                 print(f"[{tag} >>] {format_ws_payload_func(payload)}", flush=True)
 
         def on_received(payload) -> None:
+            """Обработать входящий websocket frame и передать его в нужный доменный pipeline."""
+
             if ws_log_enabled:
                 print(f"[{tag} <<] {format_ws_payload_func(payload)}", flush=True)
 
@@ -50,6 +60,8 @@ def wire_ws_logging(
                     asyncio.create_task(process_betting_round_func(page, payload))
 
         def on_close(*_) -> None:
+            """Отметить закрытие accounting websocket и обновить runtime snapshot."""
+
             if is_accounting:
                 betting_state["accounting_ws_connected"] = False
                 betting_state["last_accounting_ws_closed_at"] = datetime.now(timezone.utc).isoformat()

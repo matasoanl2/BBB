@@ -1,3 +1,5 @@
+"""Конфигурация рантайма на dataclass и вспомогательные функции загрузки env."""
+
 from __future__ import annotations
 
 import os
@@ -56,6 +58,7 @@ class AccountingConfig:
     balance_stale_seconds: float
     recovery_reload_seconds: float
     recovery_cooldown_seconds: float
+    # Poll interval for accounting_ws health monitoring.
     monitor_poll_seconds: float
     debug_rejected_messages: bool
 
@@ -92,6 +95,8 @@ class ColorConfig:
 
 @dataclass(slots=True)
 class RuntimeConfig:
+    """Верхнеуровневая неизменяемая конфигурация рантайма, собранная из env."""
+
     browser: BrowserConfig
     database: DatabaseConfig
     betting: BettingConfig
@@ -103,6 +108,8 @@ class RuntimeConfig:
 
 
 def load_runtime_config(app_dir: Path) -> RuntimeConfig:
+    """Загрузить всю конфигурацию рантайма из переменных окружения."""
+
     color_enabled = _env_bool("COLOR_ENABLED", "true")
     colors = ColorConfig(
         enabled=color_enabled,

@@ -1,3 +1,5 @@
+"""FastAPI-дашборд для текущего состояния рантайма и недавней истории ставок."""
+
 from __future__ import annotations
 
 import os
@@ -19,6 +21,8 @@ app = FastAPI(title="BuyBayBye Dashboard")
 
 
 def _get_db_connection():
+    """Создать подключение к PostgreSQL для dashboard-запросов."""
+
     return psycopg2.connect(
         user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("DB_PASSWORD", "postgres"),
@@ -30,6 +34,8 @@ def _get_db_connection():
 
 
 def _ensure_dashboard_schema() -> None:
+    """Гарантировать наличие таблиц, которые читает и заполняет dashboard."""
+
     conn = _get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -86,10 +92,14 @@ def _ensure_dashboard_schema() -> None:
 
 @app.on_event("startup")
 def _startup() -> None:
+    """Подготовить dashboard schema при старте FastAPI-приложения."""
+
     _ensure_dashboard_schema()
 
 
 def _fetch_one(query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+    """Выполнить SQL-запрос и вернуть одну строку в виде словаря."""
+
     conn = _get_db_connection()
     cursor = conn.cursor()
     if params:
@@ -103,6 +113,8 @@ def _fetch_one(query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | Non
 
 
 def _fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    """Выполнить SQL-запрос и вернуть все строки как список словарей."""
+
     conn = _get_db_connection()
     cursor = conn.cursor()
     if params:
@@ -116,12 +128,16 @@ def _fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]
 
 
 def _iso(value: Any) -> str | None:
+    """Преобразовать datetime или произвольное значение в строку для JSON-ответа."""
+
     if isinstance(value, datetime):
         return value.isoformat()
     return None if value is None else str(value)
 
 
 def _format_target(outcome: str | None, specifier: str | None) -> str:
+    """Собрать компактную подпись цели ставки или результата для dashboard UI."""
+
     if not outcome:
         return "-"
     if outcome == "double":
@@ -132,6 +148,8 @@ def _format_target(outcome: str | None, specifier: str | None) -> str:
 
 
 def _parse_round(row: dict[str, Any]) -> dict[str, Any]:
+    """Преобразовать строку game_results в сериализованное представление раунда."""
+
     dice_results = row.get("dice_results") or {}
     dice = dice_results.get("dice", []) if isinstance(dice_results, dict) else []
     player = dice_results.get("player", {}) if isinstance(dice_results, dict) else {}
@@ -168,6 +186,8 @@ def _parse_round(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _get_snapshot() -> dict[str, Any]:
+    """Вернуть live runtime snapshot или безопасные значения по умолчанию."""
+
     row = _fetch_one(
         "SELECT updated_at, payload FROM runtime_snapshot WHERE snapshot_key = %s",
         ("live",),
@@ -200,6 +220,8 @@ def _get_snapshot() -> dict[str, Any]:
 
 
 def _get_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Собрать сводные метрики dashboard из snapshot и агрегатов bet_history."""
+
     bets = _fetch_one(
         """
         SELECT
@@ -247,6 +269,8 @@ def _get_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 def _get_recent_bets(limit: int = 20) -> list[dict[str, Any]]:
+    """Загрузить последние ставки и подготовить их к отображению в dashboard."""
+
     rows = _fetch_all(
         """
         SELECT id, timestamp, outcome, specifier, amount, strategy, bet_step, status,
@@ -273,6 +297,8 @@ def _get_recent_bets(limit: int = 20) -> list[dict[str, Any]]:
 
 
 def _get_recent_rounds(limit: int = 20) -> list[dict[str, Any]]:
+    """Загрузить последние игровые раунды и преобразовать их в UI-формат."""
+
     rows = _fetch_all(
         """
         SELECT id, timestamp, player_name, dice_results
@@ -286,6 +312,8 @@ def _get_recent_rounds(limit: int = 20) -> list[dict[str, Any]]:
 
 
 def _get_balance_series(limit: int = 160) -> list[dict[str, Any]]:
+    """Построить временной ряд session balance и account balance из runtime_events."""
+
     rows = _fetch_all(
         """
         SELECT timestamp, event_type,
@@ -312,6 +340,8 @@ def _get_balance_series(limit: int = 160) -> list[dict[str, Any]]:
 
 
 def _get_result_curve(limit: int = 160) -> list[dict[str, Any]]:
+    """Построить кривую wins/losses и rolling win-rate по истории resolved ставок."""
+
     rows = _fetch_all(
         """
         SELECT id, timestamp, status
@@ -357,6 +387,8 @@ def _get_result_curve(limit: int = 160) -> list[dict[str, Any]]:
 
 
 def _get_recent_events(limit: int = 20) -> list[dict[str, Any]]:
+    """Вернуть последние runtime events в упрощенном виде для панели наблюдения."""
+
     rows = _fetch_all(
         """
         SELECT timestamp, event_type, payload
@@ -381,6 +413,8 @@ def _get_recent_events(limit: int = 20) -> list[dict[str, Any]]:
 
 
 def _build_overview() -> dict[str, Any]:
+    """Собрать полный overview payload для dashboard API."""
+
     snapshot = _get_snapshot()
     recent_bets = _get_recent_bets()
     recent_rounds = _get_recent_rounds()
@@ -405,6 +439,8 @@ def _build_overview() -> dict[str, Any]:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
+    """Отрендерить основную HTML-страницу dashboard."""
+
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -417,10 +453,14 @@ def index(request: Request):
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    """Проверить доступность базы данных и вернуть простой health response."""
+
     _fetch_one("SELECT 1 AS ok")
     return {"status": "ok"}
 
 
 @app.get("/api/overview")
 def api_overview() -> dict[str, Any]:
+    """Вернуть агрегированный overview payload для фронтенда dashboard."""
+
     return _build_overview()

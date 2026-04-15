@@ -1,3 +1,5 @@
+"""Форматирование логов с учетом ANSI-кодов и видимой ширины в терминале."""
+
 from __future__ import annotations
 
 import importlib
@@ -20,7 +22,7 @@ DOUBLE_WIDTH_EMOJI = {"❌", "✅", "🧰", "🎲", "🔄", "♻", "🔴", "🟡
 
 
 def visible_length(s: str) -> int:
-    """Получить видимую ширину строки для терминала (без ANSI кодов)."""
+    """Вернуть видимую ширину строки в терминале без ANSI escape-кодов."""
     text = re.sub(r'\033\[[0-9;]*m', '', s)
 
     width = 0
@@ -42,7 +44,7 @@ def visible_length(s: str) -> int:
 
 
 def ansi_emoji_compensation(s: str) -> int:
-    """Компенсация бага терминала: ANSI-цвет + несколько emoji в одном span."""
+    """Компенсировать сбои ширины терминала, когда ANSI-span содержит несколько emoji."""
     if '\033[' not in s:
         return 0
     text = re.sub(r'\033\[[0-9;]*m', '', s)
@@ -51,7 +53,7 @@ def ansi_emoji_compensation(s: str) -> int:
 
 
 def pad_width(s: str, width: int) -> str:
-    """Добавить пробелы для выравнивания, учитывая ANSI коды и emoji."""
+    """Дополнить строку до нужной ширины с учетом ANSI-кодов и emoji."""
     visible = visible_length(s)
     compensation = ansi_emoji_compensation(s)
     padding = width - visible - compensation
@@ -61,7 +63,7 @@ def pad_width(s: str, width: int) -> str:
 
 
 def pad_width_center(s: str, width: int) -> str:
-    """Добавить пробелы для центрирования, учитывая ANSI коды и emoji."""
+    """Центрировать строку с учетом ANSI-кодов и ширины emoji."""
     visible = visible_length(s)
     compensation = ansi_emoji_compensation(s)
     padding = width - visible - compensation
@@ -73,6 +75,8 @@ def pad_width_center(s: str, width: int) -> str:
 
 
 def format_outcome(outcome: str, specifier: str = "") -> str:
+    """Вернуть компактное текстовое представление исхода ставки."""
+
     if outcome == "double":
         return "🎲"
     if specifier:
@@ -81,6 +85,8 @@ def format_outcome(outcome: str, specifier: str = "") -> str:
 
 
 def format_combo_pretty(combo: str) -> str:
+    """Преобразовать ключ комбинации в читаемый цветной вид для логов."""
+
     if combo == "double":
         return "🎲"
     if combo.startswith("red_"):
@@ -93,6 +99,8 @@ def format_combo_pretty(combo: str) -> str:
 
 
 def format_outcome_pretty(outcome: str, specifier: str = "") -> str:
+    """Вернуть красивое отображение цели ставки с иконками цвета и дубля."""
+
     if outcome == "double":
         return "🎲"
     if outcome == "red":
@@ -103,6 +111,8 @@ def format_outcome_pretty(outcome: str, specifier: str = "") -> str:
 
 
 def format_result_pretty(result: str) -> str:
+    """Преобразовать raw round result в краткое отображение для таблицы логов."""
+
     if result.startswith("no_"):
         return "❌"
     if result == "double":
@@ -113,6 +123,8 @@ def format_result_pretty(result: str) -> str:
 
 
 def format_rolled_dice_pretty(dice_results: list) -> str:
+    """Собрать строку с выпавшими кубиками в человекочитаемом виде."""
+
     if not isinstance(dice_results, list) or len(dice_results) == 0:
         return "-"
 
@@ -130,6 +142,8 @@ def format_rolled_dice_pretty(dice_results: list) -> str:
 
 
 def format_round_result_pretty(dice_results: list) -> str:
+    """Вернуть итог раунда с отдельным обозначением дубля, если он выпал."""
+
     if not isinstance(dice_results, list) or len(dice_results) < 2:
         return format_rolled_dice_pretty(dice_results)
 

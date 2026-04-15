@@ -1,3 +1,5 @@
+"""Вспомогательные функции для динамического выбора ставки по частотам."""
+
 from __future__ import annotations
 
 import psycopg2
@@ -8,6 +10,8 @@ from buybaybye.runtime_config import RuntimeConfig
 
 
 def analyze_recent_bets_stats(*, runtime_context: RuntimeContext) -> dict:
+    """Собрать локальную статистику win-rate по недавним ставкам из runtime state."""
+
     recent_bets = runtime_context.betting_state.get("recent_bets", [])
     if not recent_bets:
         return {}
@@ -30,6 +34,8 @@ def analyze_all_results_frequency(
     runtime_context: RuntimeContext,
     runtime_config: RuntimeConfig,
 ) -> dict:
+    """Посчитать частоты комбинаций по historical game_results с учетом dynamic-фильтров."""
+
     betting_state = runtime_context.betting_state
     database_config = runtime_config.database
     dynamic_config = runtime_config.dynamic_betting
@@ -129,6 +135,8 @@ def get_best_combination(
     runtime_config: RuntimeConfig,
     analyze_all_results_frequency_func,
 ) -> tuple[str, str]:
+    """Выбрать лучшую комбинацию ставки на основе рассчитанных частот."""
+
     default_outcome, default_specifier = runtime_context.get_current_bet_target()
     dynamic_config = runtime_config.dynamic_betting
     bet_debug_enabled = runtime_config.betting.debug_enabled
@@ -224,6 +232,8 @@ def update_dynamic_bet(
     format_outcome_pretty_func,
     format_combo_pretty_func,
 ) -> tuple[str, str]:
+    """Обновить текущую цель ставки, если настал момент dynamic-пересчета."""
+
     current_outcome, current_specifier = runtime_context.get_current_bet_target()
     betting_state = runtime_context.betting_state
     dynamic_config = runtime_config.dynamic_betting
@@ -296,6 +306,8 @@ def update_dynamic_bet(
 
 
 def generate_random_bet(*, runtime_config: RuntimeConfig, format_outcome_pretty_func) -> tuple[str, str]:
+    """Сгенерировать случайную комбинацию ставки как fallback после длинной серии проигрышей."""
+
     combos = [
         ("red", "1"), ("red", "2"), ("red", "3"), ("red", "4"), ("red", "5"), ("red", "6"),
         ("yellow", "1"), ("yellow", "2"), ("yellow", "3"), ("yellow", "4"), ("yellow", "5"), ("yellow", "6"),

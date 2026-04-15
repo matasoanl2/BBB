@@ -1,3 +1,5 @@
+"""Вспомогательные функции для отчетов по сессии и статистике кубиков."""
+
 from __future__ import annotations
 
 from buybaybye.runtime_context import RuntimeContext
@@ -11,6 +13,8 @@ def print_session_stats(
     checkpoint: int,
     calculate_roi_func,
 ) -> None:
+    """Вывести сводную статистику текущей сессии на контрольной точке."""
+
     betting_state = runtime_context.betting_state
     if not betting_state:
         return
@@ -40,6 +44,8 @@ def print_dice_stats_20(
     runtime_config: RuntimeConfig,
     format_combo_pretty_func,
 ) -> None:
+    """Печатать накопительную статистику комбинаций и дублей каждые 20 ставок."""
+
     betting_state = runtime_context.betting_state
     if not betting_state:
         return

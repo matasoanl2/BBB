@@ -1,3 +1,5 @@
+"""Сборка runtime-объектов для главной точки входа приложения."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,6 +13,8 @@ from buybaybye.runtime_services import RuntimeServices
 
 @dataclass(slots=True)
 class RuntimeComponents:
+    """Контейнер с собранными runtime config, state, services и app."""
+
     config: RuntimeConfig
     context: RuntimeContext
     services: RuntimeServices
@@ -18,6 +22,8 @@ class RuntimeComponents:
 
 
 def build_runtime(app_dir: Path) -> RuntimeComponents:
+    """Собрать полностью связанный runtime graph приложения."""
+
     runtime_config = load_runtime_config(app_dir)
     runtime_context = create_runtime_context(
         bet_mode_outcome=runtime_config.betting.default_outcome,

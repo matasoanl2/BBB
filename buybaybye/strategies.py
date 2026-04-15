@@ -1,3 +1,5 @@
+"""Вспомогательные функции для загрузки стратегий, валидации и инициализации betting state."""
+
 from __future__ import annotations
 
 import sys
@@ -7,7 +9,7 @@ import yaml
 
 
 def validate_strategy_coefficients(strategy_name: str, coefficients: list, base_bet: float) -> tuple[bool, str]:
-    """Проверить, что коэффициенты стратегии дают ставки, кратные 10."""
+    """Проверить, что коэффициенты стратегии сохраняют кратность ставки десяти."""
     invalid_coefficients = []
 
     for index, coeff in enumerate(coefficients):
@@ -27,7 +29,7 @@ def validate_strategy_coefficients(strategy_name: str, coefficients: list, base_
 
 
 def load_strategies(strategies_dir: Path, base_bet: float) -> dict:
-    """Загрузить все стратегии из папки strategies/."""
+    """Загрузить и провалидировать все YAML-стратегии из папки strategies."""
     try:
         if not strategies_dir.exists():
             print(f"[ERROR] Папка стратегий не найдена: {strategies_dir}", flush=True)
@@ -76,7 +78,7 @@ def load_strategies(strategies_dir: Path, base_bet: float) -> dict:
 
 
 def init_betting_state(strategy: dict, bet_mode_outcome: str, bet_mode_specifier: str) -> dict:
-    """Инициализировать состояние ставок для текущей стратегии."""
+    """Инициализировать betting state для выбранной стратегии и цели ставки."""
     return {
         "current_step": 0,
         "consecutive_losses": 0,

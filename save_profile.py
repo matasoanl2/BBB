@@ -1,11 +1,4 @@
-"""
-Script untuk menyimpan dan membackup browser profile session
-
-Fungsi:
-- Mengekspor profil browser ke arsip terkompresi
-- Membuat backup dengan timestamp
-- Memulihkan profil dari backup
-"""
+"""Утилита для резервного копирования, восстановления и обслуживания профиля браузера."""
 
 import os
 import shutil
@@ -22,9 +15,7 @@ BACKUPS_DIR = Path(__file__).resolve().parent / "profile_backups"
 
 
 def get_profile_info() -> dict:
-    """
-    Получить информацию о текущем профиле (cookies, размер, время модификации)
-    """
+    """Вернуть краткую информацию о текущем профиле браузера."""
     if not PROFILE_DIR.exists():
         return {"status": "no_profile", "message": "Профиль не существует"}
     
@@ -55,15 +46,7 @@ def get_profile_info() -> dict:
 
 
 def save_profile(output_path: str = None) -> bool:
-    """
-    Сохранить профиль в архив
-    
-    Args:
-        output_path: Путь для архива (опционально, если None используется временная метка)
-        
-    Returns:
-        True если успешно, False если ошибка
-    """
+    """Сохранить текущий профиль браузера в сжатый архив."""
     if not PROFILE_DIR.exists():
         print("[ERROR] Профиль браузера не найден:", PROFILE_DIR)
         return False
@@ -102,15 +85,7 @@ def save_profile(output_path: str = None) -> bool:
 
 
 def restore_profile(backup_path: str) -> bool:
-    """
-    Восстановить профиль из архива
-    
-    Args:
-        backup_path: Путь к архиву резервной копии
-        
-    Returns:
-        True если успешно, False если ошибка
-    """
+    """Восстановить профиль браузера из резервной копии."""
     backup_path = Path(backup_path)
     
     if not backup_path.exists():
@@ -149,9 +124,8 @@ def restore_profile(backup_path: str) -> bool:
 
 
 def list_backups() -> None:
-    """
-    Показать список всех резервных копий
-    """
+    """Вывести все доступные архивы резервных копий профиля с базовыми метаданными."""
+
     if not BACKUPS_DIR.exists():
         print("[INFO] Резервные копии не найдены")
         return
@@ -176,12 +150,8 @@ def list_backups() -> None:
 
 
 def clean_old_backups(keep_count: int = 5) -> None:
-    """
-    Удалить старые резервные копии, оставив только последние N
-    
-    Args:
-        keep_count: Количество последних резервных копий для сохранения
-    """
+    """Удалить старые архивы резервных копий, оставив только последние ``keep_count`` файлов."""
+
     if not BACKUPS_DIR.exists():
         print("[INFO] Резервные копии не найдены")
         return
@@ -206,6 +176,8 @@ def clean_old_backups(keep_count: int = 5) -> None:
 
 
 def main():
+    """CLI-точка входа для операций резервного копирования и восстановления профиля браузера."""
+
     parser = argparse.ArgumentParser(
         description="Утилита для сохранения, восстановления и управления профилем браузера Patchright"
     )

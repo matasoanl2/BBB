@@ -1,3 +1,5 @@
+"""Вспомогательные функции PostgreSQL для рантайма и служебных утилит."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -9,7 +11,7 @@ from buybaybye.runtime_config import DatabaseConfig
 
 
 def get_db_connection(*, database_config: DatabaseConfig):
-    """Получить подключение к PostgreSQL с автоматическим созданием таблиц."""
+    """Создать подключение к PostgreSQL и гарантировать наличие runtime-схемы."""
     conn = psycopg2.connect(
         user=database_config.user,
         password=database_config.password,
@@ -79,7 +81,7 @@ def get_db_connection(*, database_config: DatabaseConfig):
 
 
 def save_target_ws_message(*, payload_text: str, get_db_connection_func) -> None:
-    """Сохранить rng_values сообщение в PostgreSQL."""
+    """Сохранить одно rng_values websocket-сообщение в PostgreSQL."""
     import json
 
     try:

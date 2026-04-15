@@ -98,11 +98,8 @@ def parse_time_period(time_filter):
 
 
 def get_rounds_from_db(time_filter="all"):
-    """Получить раунды из PostgreSQL
-    
-    Args:
-        time_filter: Строка с периодом времени (см. parse_time_period для поддерживаемых форматов)
-    """
+    """Загрузить историю раундов из PostgreSQL для выбранного time filter."""
+
     try:
         # Парсим время фильтра
         try:
@@ -159,7 +156,8 @@ def get_rounds_from_db(time_filter="all"):
 
 
 def load_strategies():
-    """Загружает все стратегии из папки strategies"""
+    """Загрузить все описания стратегий из папки strategies."""
+
     strategies = {}
     
     if not STRATEGIES_DIR.exists():
@@ -695,24 +693,8 @@ def analyze_combination(rounds, bet_type, bet_value, strategy_name, strategy_dat
 
 
 def analyze_combination_averaged(rounds, bet_type, bet_value, strategy_name, strategy_data, base_bet=10):
-    """
-    Анализирует комбинацию со ВСЕМИ вариациями и возвращает УСРЕДНЁННЫЕ результаты
-    
-    Проводит анализ для каждого возможного начального шага прогрессии
-    (количество вариаций = количество коэффициентов в стратегии)
-    и усредняет результаты.
-    
-    Args:
-        rounds: список раундов из БД
-        bet_type: тип ставки
-        bet_value: значение ставки
-        strategy_name: название стратегии
-        strategy_data: данные стратегии
-        base_bet: базовая ставка
-    
-    Returns:
-        dict с усреднёнными результатами по всем вариациям
-    """
+    """Прогнать одну комбинацию по всем возможным стартовым шагам и усреднить результат."""
+
     
     num_variations = len(strategy_data["coefficients"])
     
@@ -769,18 +751,8 @@ def analyze_combination_averaged(rounds, bet_type, bet_value, strategy_name, str
 
 
 def find_optimal_combinations(results, combo_frequency, min_roi=5.0, min_win_rate=17.0):
-    """
-    Найти оптимальные комбинации для ставок
-    
-    Args:
-        results: список всех результатов анализа
-        combo_frequency: словарь с частотой выпадения комбинаций
-        min_roi: минимальный ROI для отбора
-        min_win_rate: минимальный win rate для отбора
-    
-    Returns:
-        список оптимальных комбинаций, отсортированный по профиту
-    """
+    """Отфильтровать результаты анализа до комбинаций, проходящих пороги ROI и hit-rate."""
+
     optimal = []
     
     for result in results:
@@ -809,17 +781,8 @@ def find_optimal_combinations(results, combo_frequency, min_roi=5.0, min_win_rat
 
 
 def get_top_recommendations(results, combo_frequency, top_n=5):
-    """
-    Получить ТОП рекомендаций для ставок
-    
-    Args:
-        results: список всех результатов анализа
-        combo_frequency: словарь частот комбинаций
-        top_n: количество рекомендаций
-    
-    Returns:
-        список TOP N комбинаций с рекомендациями
-    """
+    """Выбрать топ рекомендуемых комбинаций по лучшим стратегиям для каждой комбинации."""
+
     # Группировать по комбинациям и найти лучшую стратегию для каждой
     best_by_combo = {}
     
@@ -849,17 +812,8 @@ def get_top_recommendations(results, combo_frequency, top_n=5):
 
 
 def calculate_expected_profit(recommendations, days=1, avg_bets_per_day=1074):
-    """
-    Рассчитать ожидаемый профит на вех дни
-    
-    Args:
-        recommendations: список рекомендаций
-        days: количество дней
-        avg_bets_per_day: среднее количество ставок в день
-    
-    Returns:
-        словарь с прогнозом
-    """
+    """Оценить суммарный профит по набору рекомендаций на будущий период."""
+
     if not recommendations:
         return {"days": days, "total_expected_profit": 0, "daily_average": 0}
     
@@ -881,6 +835,8 @@ def calculate_expected_profit(recommendations, days=1, avg_bets_per_day=1074):
 
 
 def main():
+    """CLI-точка входа для полного сценария многосратегийного анализа."""
+
     # Парсинг аргументов командной строки
     parser = argparse.ArgumentParser(description="Полный анализ всех комбинаций и стратегий")
     parser.add_argument(

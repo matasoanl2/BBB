@@ -1,15 +1,17 @@
+"""Вспомогательные функции для поиска JWT в браузерных запросах и ответах."""
+
 from __future__ import annotations
 
 import asyncio
 
 
 def handle_response(response, *, handle_response_async_func) -> None:
-    """Запустить асинхронный поиск JWT токена в ответе."""
+    """Запланировать асинхронный поиск JWT в ответе браузера."""
     asyncio.create_task(handle_response_async_func(response))
 
 
 async def handle_response_async(response, *, set_jwt_token_func, color_cyan: str, color_reset: str) -> None:
-    """Асинхронная обработка ответа для поиска JWT токена."""
+    """Проверить ответ на наличие JWT и сохранить первое валидное совпадение."""
     try:
         auth_header = response.headers.get("authorization", "")
         if "eyJ" in auth_header and auth_header.startswith("Bearer "):
@@ -36,7 +38,7 @@ async def handle_response_async(response, *, set_jwt_token_func, color_cyan: str
 
 
 def handle_request(request, *, set_jwt_token_func, color_cyan: str, color_reset: str) -> None:
-    """Перехватить запрос и поискать JWT токен в URL, заголовках и теле запроса."""
+    """Проверить запрос на наличие JWT в URL, заголовках и теле."""
     try:
         url = request.url
         if "token=" in url:
@@ -92,6 +94,6 @@ def handle_request(request, *, set_jwt_token_func, color_cyan: str, color_reset:
 
 
 def subscribe_jwt_search_to_page(page, *, response_handler, request_handler) -> None:
-    """Подписать поиск JWT токена на события ответов и запросов страницы."""
+    """Подключить обработчики поиска JWT к событиям запросов и ответов страницы."""
     page.on("response", response_handler)
     page.on("request", request_handler)

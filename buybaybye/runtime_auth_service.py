@@ -1,3 +1,5 @@
+"""Сервис runtime-слоя для аутентификации и обновления JWT."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,26 +17,42 @@ from buybaybye.runtime_context import RuntimeContext
 
 
 class AuthRuntimeService:
+    """Обрабатывает захват JWT, вспомогательный режим и потоки восстановления авторизации."""
+
     def __init__(self, runtime_context: RuntimeContext, runtime_config: RuntimeConfig):
+        """Инициализировать auth-service общим runtime state и конфигурацией."""
+
         self.runtime_context = runtime_context
         self.runtime_config = runtime_config
 
     def set_jwt_token(self, token: str) -> None:
+        """Сохранить текущий JWT токен в runtime context."""
+
         self.runtime_context.jwt_token = token
 
     def get_jwt_token(self) -> str | None:
+        """Вернуть текущий JWT токен из runtime context."""
+
         return self.runtime_context.jwt_token
 
     def is_telegram_chat_id_mode(self, argv: Sequence[str]) -> bool:
+        """Проверить, запущен ли процесс в режиме получения TELEGRAM_CHAT_ID."""
+
         return _notifications_is_telegram_chat_id_mode(argv)
 
     async def run_telegram_chat_id_helper(self) -> None:
+        """Запустить Telegram helper для определения chat id."""
+
         await _notifications_run_telegram_chat_id_helper(self.runtime_config.telegram)
 
     def handle_response(self, response) -> None:
+        """Передать browser response в pipeline поиска JWT."""
+
         _jwt_handle_response(response, handle_response_async_func=self.handle_response_async)
 
     async def handle_response_async(self, response) -> None:
+        """Асинхронно обработать response и при необходимости сохранить JWT."""
+
         await _jwt_handle_response_async(
             response,
             set_jwt_token_func=self.set_jwt_token,
@@ -43,6 +61,8 @@ class AuthRuntimeService:
         )
 
     def handle_request(self, request) -> None:
+        """Проверить исходящий запрос на наличие JWT в URL, заголовках и теле."""
+
         _jwt_handle_request(
             request,
             set_jwt_token_func=self.set_jwt_token,
@@ -51,9 +71,13 @@ class AuthRuntimeService:
         )
 
     def subscribe_jwt_search_to_page(self, page) -> None:
+        """Подписать страницу на поиск JWT в запросах и ответах браузера."""
+
         _jwt_subscribe_jwt_search_to_page(page, response_handler=self.handle_response, request_handler=self.handle_request)
 
     def is_forbidden_access_error(self, status_code: int, response_text: str) -> bool:
+        """Определить, соответствует ли ответ типичному 403 FORBIDDEN от betting API."""
+
         if status_code != 403:
             return False
 
@@ -70,6 +94,8 @@ class AuthRuntimeService:
         return payload.get("code") == 403 and payload.get("status") == "FORBIDDEN" and message == "Доступ запрещён"
 
     async def reload_page_and_refresh_token(self, page) -> bool:
+        """Перезагрузить страницу и дождаться повторного получения JWT токена."""
+
         async with self.runtime_context.ensure_page_reload_lock():
             old_token = self.runtime_context.jwt_token
             self.runtime_context.jwt_token = None

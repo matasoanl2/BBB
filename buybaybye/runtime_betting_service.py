@@ -1,3 +1,5 @@
+"""Фасад runtime-слоя для betting-домена."""
+
 from __future__ import annotations
 
 from buybaybye.betting import calculate_bet_amount as _betting_calculate_bet_amount
@@ -18,14 +20,22 @@ from buybaybye.runtime_context import RuntimeContext
 
 
 class BettingRuntimeService:
+    """Предоставляет операции ставок, отчетности и динамического выбора цели."""
+
     def __init__(self, runtime_context: RuntimeContext, runtime_config: RuntimeConfig):
+        """Инициализировать betting-service общим runtime state и конфигурацией."""
+
         self.runtime_context = runtime_context
         self.runtime_config = runtime_config
 
     def validate_base_bet(self, bet_amount: float) -> bool:
+        """Проверить, что ставка сохраняет требуемую кратность десяти."""
+
         return bet_amount % 10 == 0
 
     def advance_step_after_set_error(self) -> tuple[int, int, bool]:
+        """Сдвинуть шаг стратегии после ошибки SET и вернуть информацию о переходе."""
+
         max_steps = self.runtime_context.get_max_strategy_steps()
         current_step = self.runtime_context.betting_state.get("current_step", 0)
 
@@ -42,6 +52,8 @@ class BettingRuntimeService:
         return current_step, max_steps, restarted
 
     def calculate_roi(self) -> float:
+        """Рассчитать текущий ROI сессии по накопленному профиту и сумме ставок."""
+
         total_bet = self.runtime_context.betting_state.get("total_bet_amount", 0)
         total_profit = self.runtime_context.betting_state.get("total_profit", 0)
         if total_bet == 0:
@@ -49,6 +61,8 @@ class BettingRuntimeService:
         return (total_profit / total_bet) * 100
 
     def print_session_stats(self, checkpoint: int = 0) -> None:
+        """Вывести сводную статистику сессии на указанной контрольной точке."""
+
         _reporting_print_session_stats(
             runtime_context=self.runtime_context,
             runtime_config=self.runtime_config,
@@ -57,6 +71,8 @@ class BettingRuntimeService:
         )
 
     def print_dice_stats_20(self) -> None:
+        """Печатать накопительную статистику комбинаций каждые 20 ставок."""
+
         _reporting_print_dice_stats_20(
             runtime_context=self.runtime_context,
             runtime_config=self.runtime_config,
@@ -78,6 +94,8 @@ class BettingRuntimeService:
         error_msg: str = "",
         bets_count: str = "",
     ) -> str:
+        """Собрать форматированную строку лога ставки с цветами и выравниванием."""
+
         return _betting_format_bet_log(
             action=action,
             status_icon=status_icon,
@@ -102,18 +120,26 @@ class BettingRuntimeService:
         )
 
     def format_outcome_pretty(self, outcome: str, specifier: str = "") -> str:
+        """Преобразовать цель ставки в короткий читаемый вид для логов и UI."""
+
         return _format_outcome_pretty(outcome, specifier)
 
     def analyze_recent_bets_stats(self) -> dict:
+        """Собрать локальную статистику по recent_bets из runtime state."""
+
         return _dynamic_analyze_recent_bets_stats(runtime_context=self.runtime_context)
 
     def analyze_all_results_frequency(self) -> dict:
+        """Посчитать частоты комбинаций по historical game_results из базы данных."""
+
         return _dynamic_analyze_all_results_frequency(
             runtime_context=self.runtime_context,
             runtime_config=self.runtime_config,
         )
 
     def get_best_combination(self, stats: dict | None = None) -> tuple[str, str]:
+        """Выбрать лучшую комбинацию ставки для dynamic betting режима."""
+
         return _dynamic_get_best_combination(
             stats=stats,
             runtime_context=self.runtime_context,
@@ -122,6 +148,8 @@ class BettingRuntimeService:
         )
 
     def update_dynamic_bet(self) -> None:
+        """Пересчитать и при необходимости обновить текущую цель dynamic ставки."""
+
         _dynamic_update_dynamic_bet(
             runtime_context=self.runtime_context,
             runtime_config=self.runtime_config,
@@ -132,12 +160,16 @@ class BettingRuntimeService:
         )
 
     def generate_random_bet(self) -> tuple[str, str]:
+        """Сгенерировать fallback-ставку для сброса после длинной серии проигрышей."""
+
         return _dynamic_generate_random_bet(
             runtime_config=self.runtime_config,
             format_outcome_pretty_func=_format_outcome_pretty,
         )
 
     def calculate_bet_amount(self) -> float:
+        """Рассчитать размер следующей ставки по текущему шагу активной стратегии."""
+
         return _betting_calculate_bet_amount(
             base_bet=self.runtime_config.betting.base_bet,
             runtime_context=self.runtime_context,

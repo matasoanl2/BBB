@@ -386,6 +386,24 @@ BET_DELAY_MIN=0.8                       # Мин. задержка перед с
 BET_DELAY_MAX=1.5                       # Макс. задержка перед ставкой (сек)
 ```
 
+**Мониторинг и recovery accounting_ws:**
+```
+ACCOUNTING_BALANCE_STALE_SECONDS=15     # Через сколько секунд real balance считается устаревшим
+ACCOUNTING_RECOVERY_RELOAD_SECONDS=25   # Через сколько секунд stale-состояния делать reload страницы
+ACCOUNTING_RECOVERY_COOLDOWN_SECONDS=30 # Минимальная пауза между recovery
+ACCOUNTING_MONITOR_POLL_SECONDS=3       # Интервал опроса health-monitor accounting_ws
+ACCOUNTING_DEBUG_REJECTED_MESSAGES=false
+```
+
+**Как это работает:**
+1. После успешного `SET` рантайм ожидает подтверждающее `balance_update` из `accounting_ws`.
+2. Если ожидаемое списание еще не подтверждено, real balance в логах помечается как `!`.
+3. Если новое accounting-обновление не приходит дольше `ACCOUNTING_BALANCE_STALE_SECONDS`, баланс считается stale.
+4. Если stale-состояние держится дольше `ACCOUNTING_RECOVERY_RELOAD_SECONDS`, рантайм пытается восстановить канал через reload страницы.
+5. Проверка выполняется каждые `ACCOUNTING_MONITOR_POLL_SECONDS` секунд.
+
+Пример: `💰 2008р !` означает, что последнее известное значение real balance уже устарело относительно ожидаемого списания после ставки.
+
 **Как это работает:**
 1. WebSocket получает результаты раунда
 2. Данные сохраняются в БД

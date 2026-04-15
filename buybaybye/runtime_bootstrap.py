@@ -1,3 +1,5 @@
+"""Вспомогательные функции для startup, status line и shutdown."""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,6 +15,8 @@ def print_strategy_startup_info(
     runtime_config: RuntimeConfig,
     format_outcome_pretty_func,
 ) -> None:
+    """Вывести на старте сведения о стратегии и параметрах dynamic betting."""
+
     current_strategy = runtime_context.current_strategy
     dynamic_config = runtime_config.dynamic_betting
     base_bet = runtime_config.betting.base_bet
@@ -37,6 +41,8 @@ def print_strategy_startup_info(
 
 
 def get_browser_launch_args() -> list[str]:
+    """Вернуть набор Chromium-аргументов для запуска рабочего браузерного профиля."""
+
     return [
         "--disable-blink-features=AutomationControlled",
         "--no-sandbox",
@@ -65,6 +71,8 @@ def build_runtime_status_line(
     runtime_context: RuntimeContext,
     runtime_config: RuntimeConfig,
 ) -> str:
+    """Собрать человекочитаемую status line для запущенного runtime-сеанса."""
+
     status_line = f"Браузер открыт. Профиль сессии: {runtime_config.browser.session_dir}\n"
     if runtime_config.betting.enabled and runtime_context.current_strategy:
         status_line += "🎲 РЕЖИМ СТАВОК ВКЛЮЧЕН\n"
@@ -80,6 +88,8 @@ def build_runtime_status_line(
 
 
 async def wait_for_exit_signal() -> None:
+    """Дождаться Enter в интерактивной консоли или бесконечно ждать в headless-сценарии."""
+
     if sys.stdin.isatty():
         try:
             await asyncio.to_thread(input)

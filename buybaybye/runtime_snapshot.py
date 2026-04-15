@@ -1,3 +1,5 @@
+"""Вспомогательные функции для сборки и сохранения runtime snapshot payloads."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -16,6 +18,8 @@ def build_runtime_snapshot(
     runtime_config: RuntimeConfig,
     is_account_balance_stale_func,
 ) -> dict:
+    """Собрать единый snapshot текущего runtime state для live-мониторинга."""
+
     betting_state = runtime_context.betting_state
     current_strategy = runtime_context.current_strategy
     strategy_name_value = runtime_config.betting.strategy_name if runtime_config.betting.enabled else None
@@ -73,6 +77,8 @@ def build_runtime_snapshot(
 
 
 def update_runtime_snapshot(*, get_db_connection_func, snapshot: dict, event_type: str) -> None:
+    """Сохранить live snapshot и отдельное runtime event в базе данных."""
+
     try:
         conn = get_db_connection_func()
         cursor = conn.cursor()

@@ -1,9 +1,4 @@
-"""
-Patchright с одной постоянной сессией: данные профиля лежат в каталоге SESSION_DIR.
-При каждом запуске используется тот же профиль; после закрытия браузера состояние остается на диске.
-Сохранение данных в PostgreSQL вместо JSON.
-Поддержка автоматического размещения ставок с различными стратегиями из YAML.
-"""
+"""Главная точка входа в рантайм-приложение BuyBayBye."""
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +9,8 @@ from buybaybye.runtime_factory import RuntimeComponents, build_runtime
 APP_DIR = Path(__file__).resolve().parent
 
 async def main(runtime: RuntimeComponents | None = None) -> None:
+    """Запустить собранное рантайм-приложение."""
+
     runtime_components = runtime or build_runtime(APP_DIR)
     await runtime_components.app.run()
 

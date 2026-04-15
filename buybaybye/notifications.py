@@ -1,3 +1,5 @@
+"""Вспомогательные функции для Telegram-уведомлений и режима поиска chat id."""
+
 from __future__ import annotations
 
 import asyncio
@@ -15,12 +17,16 @@ telegram_notification_timestamps: dict[str, float] = {}
 
 
 def is_telegram_chat_id_mode(argv: Sequence[str]) -> bool:
+    """Проверить, запущен ли процесс в режиме получения TELEGRAM_CHAT_ID."""
+
     if len(argv) < 2:
         return False
     return argv[1].strip().lower() in {"telegram-chat-id", "telegram_chat_id", "tg-chat-id", "tg_chat_id"}
 
 
 async def send_telegram_notification_async(bot_token: str, chat_id: str, title: str, message: str) -> None:
+    """Асинхронно отправить одно Telegram-уведомление и закрыть сессию бота."""
+
     bot = Bot(token=bot_token)
     try:
         await bot.send_message(
@@ -33,6 +39,8 @@ async def send_telegram_notification_async(bot_token: str, chat_id: str, title: 
 
 
 def send_telegram_notification_sync(telegram_config: TelegramConfig, title: str, message: str) -> None:
+    """Синхронно отправить Telegram-уведомление через временный asyncio.run."""
+
     if not telegram_config.notifications_enabled or not telegram_config.bot_token or not telegram_config.chat_id:
         return
 
@@ -50,6 +58,8 @@ def queue_telegram_notification(
     enabled: bool,
     telegram_config: TelegramConfig,
 ) -> None:
+    """Поставить уведомление в отправку с дедупликацией по ключу и cooldown-окну."""
+
     if not enabled or not telegram_config.notifications_enabled or not telegram_config.bot_token or not telegram_config.chat_id:
         return
 
@@ -67,6 +77,8 @@ def queue_telegram_notification(
 
 
 async def run_telegram_chat_id_helper(telegram_config: TelegramConfig) -> None:
+    """Запустить helper-режим, который печатает и возвращает пользователю его TELEGRAM_CHAT_ID."""
+
     if not telegram_config.bot_token:
         print("[TELEGRAM] TELEGRAM_BOT_TOKEN не задан. Заполните его в .env и повторите команду.", flush=True)
         return
@@ -77,6 +89,8 @@ async def run_telegram_chat_id_helper(telegram_config: TelegramConfig) -> None:
 
     @router.message(Command("start", "chatid", "id"))
     async def handle_chat_id_command(message: Message) -> None:
+        """Обработать команду и вывести сведения о чате вместе с chat_id."""
+
         chat_id = str(message.chat.id)
         chat_type = message.chat.type
         chat_title = getattr(message.chat, "title", None) or getattr(message.chat, "full_name", None) or "-"
@@ -97,6 +111,8 @@ async def run_telegram_chat_id_helper(telegram_config: TelegramConfig) -> None:
 
     @router.message()
     async def handle_any_message(message: Message) -> None:
+        """Обработать любое сообщение так же, как и явную команду получения chat_id."""
+
         await handle_chat_id_command(message)
 
     dp.include_router(router)

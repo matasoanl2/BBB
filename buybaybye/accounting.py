@@ -1,3 +1,5 @@
+"""Вспомогательные функции для баланса accounting websocket и recovery-логики."""
+
 from __future__ import annotations
 
 import asyncio
@@ -9,6 +11,8 @@ from buybaybye.runtime_config import RuntimeConfig
 
 
 def get_accounting_age_seconds(*, runtime_context: RuntimeContext, reference_key: str) -> float | None:
+    """Вернуть возраст timestamp-поля из betting_state в секундах."""
+
     raw_value = runtime_context.betting_state.get(reference_key)
     if not raw_value:
         return None
@@ -20,6 +24,8 @@ def get_accounting_age_seconds(*, runtime_context: RuntimeContext, reference_key
 
 
 def is_account_balance_stale(*, runtime_context: RuntimeContext, runtime_config: RuntimeConfig, get_accounting_age_seconds_func) -> bool:
+    """Определить, считается ли текущий accounting balance устаревшим."""
+
     betting_state = runtime_context.betting_state
     if not betting_state:
         return False
@@ -45,6 +51,8 @@ def record_accounting_rejection(
     reason: str,
     payload_preview: str | None,
 ) -> None:
+    """Сохранить причину отклонения accounting-сообщения и при необходимости вывести ее в лог."""
+
     runtime_context.betting_state["last_accounting_rejection_reason"] = reason
     if runtime_config.accounting.debug_rejected_messages or runtime_config.betting.debug_enabled:
         preview = f" | payload={payload_preview[:220]}" if payload_preview else ""
@@ -52,6 +60,8 @@ def record_accounting_rejection(
 
 
 def get_balance_for_log(*, runtime_context: RuntimeContext, is_account_balance_stale_func) -> str:
+    """Вернуть строку баланса для логов с маркером устаревшего real balance."""
+
     betting_state = runtime_context.betting_state
     account_balance = betting_state.get("account_balance")
     if account_balance is not None:
@@ -70,6 +80,8 @@ def update_balance_from_accounting_payload(
     update_runtime_snapshot_func,
     queue_telegram_notification_func,
 ) -> None:
+    """Обработать accounting payload и синхронизировать real balance с betting state."""
+
     betting_state = runtime_context.betting_state
     try:
         payload_text = format_ws_payload_func(payload)
@@ -170,6 +182,8 @@ async def reload_page_for_accounting_recovery(
     queue_telegram_notification_func,
     update_runtime_snapshot_func,
 ) -> bool:
+    """Перезагрузить страницу для восстановления accounting websocket и обновления real balance."""
+
     betting_state = runtime_context.betting_state
     if page.is_closed():
         return False
@@ -220,6 +234,12 @@ async def monitor_accounting_ws_health(
     is_account_balance_stale_func,
     reload_page_for_accounting_recovery_func,
 ) -> None:
+    """Следить за свежестью accounting_ws и запускать recovery через reload страницы.
+
+    Цикл считает баланс устаревшим только тогда, когда после размещенной ставки
+    остается неподтвержденное ожидаемое списание. Частота проверки задается
+    через ``runtime_config.accounting.monitor_poll_seconds``.
+    """
     betting_state = runtime_context.betting_state
     while True:
         await asyncio.sleep(runtime_config.accounting.monitor_poll_seconds)

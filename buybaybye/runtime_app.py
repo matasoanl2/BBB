@@ -1,3 +1,5 @@
+"""Оркестрация жизненного цикла runtime-приложения."""
+
 from __future__ import annotations
 
 import asyncio
@@ -13,12 +15,16 @@ from buybaybye.strategies import init_betting_state, load_strategies
 
 
 class RuntimeApp:
+    """Управляет startup-валидацией, жизненным циклом браузера и корректным shutdown."""
+
     def __init__(self, runtime_config: RuntimeConfig, runtime_context: RuntimeContext, services: RuntimeServices):
         self.runtime_config = runtime_config
         self.runtime_context = runtime_context
         self.services = services
 
     def initialize_runtime_state(self) -> None:
+        """Подготовить стратегии, betting state и startup snapshot перед запуском."""
+
         self.runtime_config.browser.session_dir.mkdir(parents=True, exist_ok=True)
         self.runtime_context.loaded_strategies = load_strategies(
             self.runtime_config.browser.strategies_dir,
@@ -53,6 +59,8 @@ class RuntimeApp:
         )
 
     async def run(self) -> None:
+        """Запустить полный browser-backed runtime до выхода пользователя."""
+
         self.initialize_runtime_state()
 
         playwright = await async_playwright().start()

@@ -1,14 +1,4 @@
-"""
-Сравнение стратегий — сводная таблица с ключевыми метриками.
-Прогоняет все стратегии на исторических данных из PostgreSQL.
-
-Использование:
-    python compare_strategies.py --bet all
-    python compare_strategies.py --bet all --time-filter all
-    python compare_strategies.py --time-filter 6hours --bet red --specifier 5
-    python compare_strategies.py --bet double
-    python compare_strategies.py --base-bet 20 --sort roi
-"""
+"""Сравнить все betting-стратегии на исторических round data из PostgreSQL."""
 from __future__ import annotations
 
 import argparse
@@ -44,7 +34,7 @@ STRATEGIES_DIR = Path(__file__).resolve().parent / "strategies"
 # ---------------------------------------------------------------------------
 
 def _parse_time_filter(tf: str):
-    """Гибкий парсер периода → (use_filter, sql_interval)."""
+    """Преобразовать человекочитаемый time filter в SQL interval tuple."""
     import re
     if tf == "all":
         return False, None
@@ -62,6 +52,8 @@ def _parse_time_filter(tf: str):
 
 
 def load_rounds(time_filter: str = "1day"):
+    """Загрузить исторические раунды из PostgreSQL для выбранного окна времени."""
+
     use_filter, interval = _parse_time_filter(time_filter)
     conn = psycopg2.connect(user=DB_USER, password=DB_PASSWORD,
                             host=DB_HOST, port=DB_PORT, database=DB_NAME)
@@ -83,6 +75,8 @@ def load_rounds(time_filter: str = "1day"):
 
 
 def load_strategies():
+    """Загрузить все YAML-стратегии, используемые в сравнительном отчете."""
+
     strats = {}
     for f in sorted(STRATEGIES_DIR.glob("*.yaml")):
         try:
@@ -98,11 +92,7 @@ def load_strategies():
 # ---------------------------------------------------------------------------
 
 def simulate(rounds, bet_type, bet_specifier, strategy, base_bet):
-    """Прогнать стратегию на исторических данных.
-
-    Returns:
-        dict с метриками или None если нет данных.
-    """
+    """Прогнать одну стратегию по историческим раундам и собрать итоговые метрики."""
     coefficients = strategy["coefficients"]
     payout = strategy.get("payout_coefficient", 5.7)
     max_steps = len(coefficients)
@@ -216,7 +206,7 @@ def simulate(rounds, bet_type, bet_specifier, strategy, base_bet):
 # ---------------------------------------------------------------------------
 
 def format_comparison_table(results, sort_key):
-    """Сформировать сводную таблицу стратегий как строку."""
+    """Сформировать основную сравнительную таблицу для всех симулированных стратегий."""
 
     rows = sorted(results, key=lambda r: r[sort_key], reverse=(sort_key != "max_drawdown"))
 
@@ -249,7 +239,7 @@ def format_comparison_table(results, sort_key):
 
 
 def format_top_bottom(results, n=3):
-    """Сформировать ТОП и АНТИТОП стратегий как строку."""
+    """Сформировать сводки по лучшим, худшим и самым безопасным стратегиям."""
     lines = []
     by_roi = sorted(results, key=lambda r: r["roi"], reverse=True)
 
@@ -281,6 +271,8 @@ def format_top_bottom(results, n=3):
 # ---------------------------------------------------------------------------
 
 def _bet_label(bet_type, specifier):
+    """Собрать человекочитаемую подпись для целевой комбинации ставки."""
+
     if bet_type == "double":
         return "🎲 DOUBLE (любой дубль)"
     icon = "🔴" if bet_type == "red" else "🟡"
@@ -288,10 +280,7 @@ def _bet_label(bet_type, specifier):
 
 
 def _run_single(rounds, strategies, bet_type, specifier, base_bet, sort_key):
-    """Симуляция всех стратегий для одной комбинации ставки.
-
-    Returns (results, table_text, top_bottom_text, summary_text) или None.
-    """
+    """Прогнать все стратегии для одной целевой комбинации и собрать секции отчета."""
     results = []
     for name, data in strategies.items():
         r = simulate(rounds, bet_type, specifier, data, base_bet)
@@ -327,6 +316,8 @@ ALL_COMBOS = (
 # ---------------------------------------------------------------------------
 
 def main():
+    """CLI-точка входа для сравнительных отчетов по стратегиям."""
+
     parser = argparse.ArgumentParser(
         description="Сравнение всех стратегий на исторических данных из PostgreSQL"
     )
