@@ -50,6 +50,7 @@ def build_runtime_snapshot(
         "total_bet_amount": betting_state.get("total_bet_amount") if betting_state else 0.0,
         "total_bets_placed": betting_state.get("total_bets_placed") if betting_state else 0,
         "pending_expected_bet_drop": betting_state.get("pending_expected_bet_drop") if betting_state else 0.0,
+        "external_deposits_total": betting_state.get("external_deposits_total") if betting_state else 0.0,
         "external_withdrawals_total": betting_state.get("external_withdrawals_total") if betting_state else 0.0,
         "current_outcome": runtime_context.bet_mode_outcome if runtime_config.betting.enabled else None,
         "current_specifier": runtime_context.bet_mode_specifier if runtime_config.betting.enabled else None,

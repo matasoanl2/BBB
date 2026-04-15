@@ -70,6 +70,7 @@ class TelegramConfig:
     chat_id: str
     request_timeout_seconds: float
     notification_cooldown_seconds: float
+    notify_deposits: bool
     notify_withdrawals: bool
     notify_accounting_issues: bool
     notify_bet_errors: bool
@@ -170,6 +171,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             chat_id=os.getenv("TELEGRAM_CHAT_ID", "").strip(),
             request_timeout_seconds=float(os.getenv("TELEGRAM_REQUEST_TIMEOUT_SECONDS", "5")),
             notification_cooldown_seconds=float(os.getenv("TELEGRAM_NOTIFICATION_COOLDOWN_SECONDS", "60")),
+            notify_deposits=_env_bool("TELEGRAM_NOTIFY_DEPOSITS", "true"),
             notify_withdrawals=_env_bool("TELEGRAM_NOTIFY_WITHDRAWALS", "true"),
             notify_accounting_issues=_env_bool("TELEGRAM_NOTIFY_ACCOUNTING_ISSUES", "true"),
             notify_bet_errors=_env_bool("TELEGRAM_NOTIFY_BET_ERRORS", "true"),

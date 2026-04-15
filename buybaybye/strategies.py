@@ -94,6 +94,7 @@ def init_betting_state(strategy: dict, bet_mode_outcome: str, bet_mode_specifier
         "last_accounting_recovery_at": None,
         "accounting_recovery_attempts": 0,
         "pending_expected_bet_drop": 0.0,
+        "external_deposits_total": 0.0,
         "external_withdrawals_total": 0.0,
         "last_bet_amount": 0.0,
         "last_set_amount": 0.0,
