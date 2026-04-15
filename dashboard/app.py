@@ -298,6 +298,34 @@ def _get_recent_bets(limit: int = 20) -> list[dict[str, Any]]:
     return result
 
 
+def _get_latest_win() -> dict[str, Any] | None:
+    """Вернуть самую свежую выигранную ставку для клиентской win-анимации."""
+
+    row = _fetch_one(
+        """
+        SELECT id, timestamp, outcome, specifier, amount, strategy, bet_step, status,
+               result_dice_color, result_dice_value
+        FROM bet_history
+        WHERE status = 'win'
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    )
+    if not row:
+        return None
+
+    return {
+        "id": row.get("id"),
+        "timestamp": _iso(row.get("timestamp")),
+        "target": _format_target(row.get("outcome"), row.get("specifier")),
+        "amount": row.get("amount"),
+        "strategy": row.get("strategy"),
+        "step": (row.get("bet_step") + 1) if isinstance(row.get("bet_step"), int) else None,
+        "status": row.get("status"),
+        "result": _format_target(row.get("result_dice_color"), row.get("result_dice_value")),
+    }
+
+
 def _get_recent_rounds(limit: int = 20) -> list[dict[str, Any]]:
     """Загрузить последние игровые раунды и преобразовать их в UI-формат."""
 
@@ -418,6 +446,7 @@ def _build_overview() -> dict[str, Any]:
     """Собрать полный overview payload для dashboard API."""
 
     snapshot = _get_snapshot()
+    latest_win = _get_latest_win()
     recent_bets = _get_recent_bets()
     recent_rounds = _get_recent_rounds()
     balance_series = _get_balance_series()
@@ -429,6 +458,7 @@ def _build_overview() -> dict[str, Any]:
     return {
         "snapshot": snapshot,
         "summary": _get_summary(snapshot),
+        "latest_win": latest_win,
         "latest_bet": latest_bet,
         "latest_round": latest_round,
         "recent_bets": recent_bets,

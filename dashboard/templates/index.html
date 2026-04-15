@@ -392,6 +392,221 @@
             font-size: 14px;
         }
 
+        .win-overlay {
+            position: fixed;
+            inset: 0;
+            display: grid;
+            place-items: center;
+            padding: 24px;
+            pointer-events: none;
+            opacity: 0;
+            visibility: hidden;
+            z-index: 9999;
+            transition: opacity 220ms ease, visibility 220ms ease;
+            overflow: hidden;
+        }
+
+        .win-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .win-overlay::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background:
+                radial-gradient(circle at center, rgba(255, 248, 214, 0.3), transparent 34%),
+                radial-gradient(circle at 20% 20%, rgba(255, 191, 73, 0.36), transparent 28%),
+                radial-gradient(circle at 80% 15%, rgba(41, 187, 137, 0.26), transparent 24%),
+                linear-gradient(180deg, rgba(12, 29, 21, 0.12), rgba(12, 29, 21, 0.6));
+            backdrop-filter: blur(10px);
+        }
+
+        .win-burst {
+            position: absolute;
+            width: min(88vw, 980px);
+            aspect-ratio: 1;
+            border-radius: 50%;
+            background:
+                radial-gradient(circle, rgba(255, 245, 195, 0.95) 0%, rgba(255, 245, 195, 0.12) 22%, transparent 48%),
+                conic-gradient(from 0deg, rgba(255, 196, 0, 0.0), rgba(255, 196, 0, 0.68), rgba(255, 255, 255, 0.0), rgba(255, 196, 0, 0.72), rgba(255, 196, 0, 0.0));
+            filter: blur(0.5px);
+            opacity: 0;
+            transform: scale(0.7) rotate(-18deg);
+        }
+
+        .win-overlay.active .win-burst {
+            animation: winBurstPulse 1500ms cubic-bezier(0.18, 0.8, 0.2, 1) forwards;
+        }
+
+        .win-card {
+            position: relative;
+            width: min(92vw, 760px);
+            padding: 38px 34px;
+            border-radius: 34px;
+            border: 1px solid rgba(255, 247, 216, 0.6);
+            background:
+                linear-gradient(180deg, rgba(255, 251, 234, 0.96), rgba(253, 238, 195, 0.93));
+            box-shadow:
+                0 28px 80px rgba(23, 33, 22, 0.28),
+                inset 0 1px 0 rgba(255, 255, 255, 0.95);
+            text-align: center;
+            transform: translateY(28px) scale(0.92);
+            opacity: 0;
+            overflow: hidden;
+        }
+
+        .win-card::before,
+        .win-card::after {
+            content: "";
+            position: absolute;
+            border-radius: 50%;
+            pointer-events: none;
+        }
+
+        .win-card::before {
+            width: 220px;
+            height: 220px;
+            right: -50px;
+            top: -70px;
+            background: radial-gradient(circle, rgba(255, 214, 84, 0.48), transparent 70%);
+        }
+
+        .win-card::after {
+            width: 180px;
+            height: 180px;
+            left: -55px;
+            bottom: -70px;
+            background: radial-gradient(circle, rgba(31, 122, 77, 0.18), transparent 72%);
+        }
+
+        .win-overlay.active .win-card {
+            animation: winCardIn 620ms cubic-bezier(0.16, 0.82, 0.18, 1) forwards;
+        }
+
+        .win-kicker {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 16px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.66);
+            border: 1px solid rgba(86, 70, 13, 0.14);
+            text-transform: uppercase;
+            letter-spacing: 0.16em;
+            font-size: 12px;
+            font-weight: 700;
+            color: #7a5d11;
+        }
+
+        .win-title {
+            position: relative;
+            margin: 16px 0 8px;
+            font-family: "Georgia", "Palatino Linotype", serif;
+            font-size: clamp(52px, 10vw, 108px);
+            line-height: 0.88;
+            letter-spacing: -0.06em;
+            color: #1f241d;
+            text-shadow: 0 8px 24px rgba(255, 255, 255, 0.55);
+        }
+
+        .win-subtitle {
+            position: relative;
+            font-size: clamp(16px, 2.6vw, 24px);
+            color: #5e5a43;
+            margin-bottom: 18px;
+        }
+
+        .win-amount {
+            position: relative;
+            font-size: clamp(44px, 8vw, 86px);
+            line-height: 0.95;
+            letter-spacing: -0.05em;
+            font-weight: 800;
+            color: var(--green);
+            text-shadow: 0 16px 28px rgba(31, 122, 77, 0.18);
+        }
+
+        .win-meta {
+            position: relative;
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 18px;
+        }
+
+        .win-tag {
+            padding: 10px 14px;
+            border-radius: 999px;
+            background: rgba(255, 255, 255, 0.64);
+            border: 1px solid rgba(86, 70, 13, 0.12);
+            color: #5d624e;
+            font-size: 13px;
+        }
+
+        .win-confetti {
+            position: absolute;
+            inset: 0;
+            overflow: hidden;
+        }
+
+        .win-confetti-piece {
+            position: absolute;
+            top: -12%;
+            width: 12px;
+            height: 28px;
+            border-radius: 999px;
+            opacity: 0;
+            animation: confettiFall 1800ms linear forwards;
+            transform-origin: center;
+        }
+
+        @keyframes winBurstPulse {
+            0% {
+                opacity: 0;
+                transform: scale(0.7) rotate(-18deg);
+            }
+            22% {
+                opacity: 0.92;
+            }
+            100% {
+                opacity: 0;
+                transform: scale(1.35) rotate(18deg);
+            }
+        }
+
+        @keyframes winCardIn {
+            0% {
+                transform: translateY(28px) scale(0.92);
+                opacity: 0;
+            }
+            70% {
+                transform: translateY(-4px) scale(1.02);
+                opacity: 1;
+            }
+            100% {
+                transform: translateY(0) scale(1);
+                opacity: 1;
+            }
+        }
+
+        @keyframes confettiFall {
+            0% {
+                opacity: 0;
+                transform: translate3d(0, 0, 0) rotate(0deg) scale(0.85);
+            }
+            8% {
+                opacity: 1;
+            }
+            100% {
+                opacity: 0;
+                transform: translate3d(var(--drift-x), 110vh, 0) rotate(var(--spin)) scale(1.1);
+            }
+        }
+
         @media (max-width: 1180px) {
             .grid-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
             .hero, .content-grid, .layout-bottom { grid-template-columns: 1fr; }
@@ -408,6 +623,20 @@
     </style>
 </head>
 <body>
+    <div class="win-overlay" id="winOverlay" aria-hidden="true">
+        <div class="win-burst"></div>
+        <div class="win-confetti" id="winConfetti"></div>
+        <div class="win-card">
+            <div class="win-kicker">Результат раунда</div>
+            <div class="win-title">WIN</div>
+            <div class="win-subtitle" id="winOverlayTarget">Ставка сыграла</div>
+            <div class="win-amount" id="winOverlayAmount">+0р</div>
+            <div class="win-meta">
+                <div class="win-tag" id="winOverlayStep">Шаг: -</div>
+                <div class="win-tag" id="winOverlayResult">Результат: -</div>
+            </div>
+        </div>
+    </div>
     <div class="shell">
         <section class="hero">
             <div class="panel hero-main">
@@ -627,6 +856,12 @@
     </div>
 
     <script>
+        const dashboardState = {
+            hasHydrated: false,
+            lastSeenWinSignature: null,
+            winOverlayTimer: null,
+        };
+
         const fmtMoney = (value) => {
             if (value === null || value === undefined || value === "") return "-";
             const number = Number(value);
@@ -656,6 +891,75 @@
         };
 
         const statusClass = (status) => `status-pill status-${String(status || "").replace(/[^a-z_]/gi, "_").toLowerCase()}`;
+
+        function renderWinConfetti() {
+            const layer = document.getElementById("winConfetti");
+            if (!layer) return;
+            layer.innerHTML = "";
+
+            const palette = ["#ffcf5a", "#1f7a4d", "#ffffff", "#bb7a22", "#2d6a8c"];
+            for (let index = 0; index < 34; index += 1) {
+                const piece = document.createElement("div");
+                piece.className = "win-confetti-piece";
+                piece.style.left = `${Math.random() * 100}%`;
+                piece.style.background = palette[index % palette.length];
+                piece.style.animationDelay = `${Math.random() * 220}ms`;
+                piece.style.setProperty("--drift-x", `${(Math.random() - 0.5) * 220}px`);
+                piece.style.setProperty("--spin", `${(Math.random() - 0.5) * 720}deg`);
+                layer.appendChild(piece);
+            }
+        }
+
+        function showWinOverlay(bet) {
+            const overlay = document.getElementById("winOverlay");
+            if (!overlay || !bet) return;
+
+            setText("winOverlayTarget", `Ставка ${bet.target || "-"} зашла`);
+            setText("winOverlayAmount", fmtMoney(bet.amount));
+            setText("winOverlayStep", `Шаг: ${bet.step || "-"}`);
+            setText("winOverlayResult", `Результат: ${bet.result || "-"}`);
+
+            renderWinConfetti();
+            overlay.classList.remove("active");
+            void overlay.offsetWidth;
+            overlay.classList.add("active");
+
+            if (dashboardState.winOverlayTimer) {
+                window.clearTimeout(dashboardState.winOverlayTimer);
+            }
+            dashboardState.winOverlayTimer = window.setTimeout(() => {
+                overlay.classList.remove("active");
+            }, 3600);
+        }
+
+        function resolveLatestWin(payload) {
+            if (payload?.latest_win) {
+                return payload.latest_win;
+            }
+            if (Array.isArray(payload?.recent_bets)) {
+                return payload.recent_bets.find((bet) => String(bet?.status || "").toLowerCase() === "win") || null;
+            }
+            return null;
+        }
+
+        function maybeCelebrateWin(latestWin) {
+            const latestWinSignature = latestWin
+                ? `${latestWin.id}:${latestWin.status}:${latestWin.result || "-"}`
+                : null;
+
+            if (!dashboardState.hasHydrated) {
+                dashboardState.hasHydrated = true;
+                dashboardState.lastSeenWinSignature = latestWinSignature;
+                return;
+            }
+
+            if (latestWinSignature === null || latestWinSignature === dashboardState.lastSeenWinSignature) {
+                return;
+            }
+
+            dashboardState.lastSeenWinSignature = latestWinSignature;
+            showWinOverlay(latestWin);
+        }
 
         function setText(id, value) {
             const node = document.getElementById(id);
@@ -887,6 +1191,7 @@
             renderResultsChart(data.result_curve || []);
             renderNetChart(data.result_curve || []);
             renderRollingChart(data.result_curve || []);
+            maybeCelebrateWin(resolveLatestWin(data));
         }
 
         async function boot() {

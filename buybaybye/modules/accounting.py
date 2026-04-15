@@ -1,4 +1,4 @@
-"""Вспомогательные функции для баланса accounting websocket и recovery-логики."""
+﻿"""Вспомогательные функции для баланса accounting websocket и recovery-логики."""
 
 from __future__ import annotations
 
@@ -126,10 +126,9 @@ def update_balance_from_accounting_payload(
     new_balance = float(value)
     previous_balance = betting_state.get("account_balance")
     pending_expected_bet_drop = float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0)
+    pending_expected_settlement_credit = float(betting_state.get("pending_expected_settlement_credit", 0.0) or 0.0)
     withdrawal_detected = False
-    deposit_detected = False
     withdrawal_amount = 0.0
-    deposit_amount = 0.0
 
     if isinstance(previous_balance, (int, float)) and new_balance < previous_balance:
         actual_drop = float(previous_balance) - new_balance
@@ -157,29 +156,16 @@ def update_balance_from_accounting_payload(
                 enabled=runtime_config.telegram.notify_withdrawals,
             )
     elif isinstance(previous_balance, (int, float)) and new_balance > previous_balance:
-        deposit_amount = new_balance - float(previous_balance)
-
-        if deposit_amount > 0.009:
-            deposit_detected = True
-            betting_state["session_balance"] += deposit_amount
-            betting_state["external_deposits_total"] = betting_state.get("external_deposits_total", 0.0) + deposit_amount
-            print(
-                f"[ACCOUNTING] Обнаружено пополнение: +{deposit_amount:.0f}р, session_balance скорректирован до {betting_state['session_balance']:.0f}р",
-                flush=True,
-            )
-            queue_telegram_notification_func(
-                "[BuyBayBye] Обнаружено пополнение средств",
-                (
-                    "Accounting balance увеличился вне обычного игрового потока.\n"
-                    f"Сумма пополнения: {deposit_amount:.0f}р\n"
-                    f"Новый real balance: {new_balance:.0f}р\n"
-                    f"Session balance: {betting_state['session_balance']:.0f}р"
-                ),
-                dedup_key="deposit_detected",
-                enabled=runtime_config.telegram.notify_deposits,
-            )
+        actual_rise = new_balance - float(previous_balance)
+        covered_by_settlement = min(actual_rise, pending_expected_settlement_credit)
+        pending_expected_settlement_credit = max(0.0, pending_expected_settlement_credit - covered_by_settlement)
+        remaining_rise = actual_rise - covered_by_settlement
+        if covered_by_settlement > 0.009 and remaining_rise > 0.0:
+            covered_by_pending_drop = min(remaining_rise, pending_expected_bet_drop)
+            pending_expected_bet_drop = max(0.0, pending_expected_bet_drop - covered_by_pending_drop)
 
     betting_state["pending_expected_bet_drop"] = pending_expected_bet_drop
+    betting_state["pending_expected_settlement_credit"] = pending_expected_settlement_credit
     betting_state["account_balance"] = new_balance
     betting_state["account_balance_type"] = normalized_balance_type
     betting_state["account_balance_updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -190,8 +176,6 @@ def update_balance_from_accounting_payload(
             "account_balance": new_balance,
             "withdrawal_detected": withdrawal_detected,
             "withdrawal_amount": withdrawal_amount,
-            "deposit_detected": deposit_detected,
-            "deposit_amount": deposit_amount,
         },
     )
 

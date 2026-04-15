@@ -41,6 +41,10 @@ COPY requirements.txt .
 RUN pip install -r requirements.txt && patchright install chromium
 
 COPY *.py ./
+COPY buybaybye ./buybaybye
+COPY dashboard/__init__.py ./dashboard/__init__.py
+COPY dashboard/app.py ./dashboard/app.py
+COPY dashboard/templates ./dashboard/templates
 COPY dashboard_templates/ ./dashboard_templates/
 COPY strategies/ ./strategies/
 RUN mkdir -p /app/profile
