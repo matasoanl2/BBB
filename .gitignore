@@ -4,6 +4,7 @@ postgres_data/
 *.sqlite
 *.sqlite3
 
+
 # Browser Profile
 profile/
 profile_docker/
