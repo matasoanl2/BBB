@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from patchright.async_api import async_playwright
+from patchright.async_api import async_playwright, Error as PatchrightError
 
 from buybaybye.core.runtime_bootstrap import build_runtime_status_line, get_browser_launch_args, print_strategy_startup_info, wait_for_exit_signal
 from buybaybye.core.runtime_config import RuntimeConfig
@@ -83,7 +83,18 @@ class RuntimeApp:
             page = context.pages[0] if context.pages else await context.new_page()
 
             print("[DEBUG] Поиск JWT токена в ответах...", flush=True)
-            await page.goto("https://betboom.ru/game/nardsgame")
+            _goto_delay = 5
+            while True:
+                try:
+                    await page.goto("https://betboom.ru/game/nardsgame")
+                    break
+                except PatchrightError as e:
+                    if "ERR_NAME_NOT_RESOLVED" in str(e) or "ERR_INTERNET_DISCONNECTED" in str(e) or "ERR_NETWORK_CHANGED" in str(e):
+                        print(f"[WARN] Нет сети, повтор через {_goto_delay}с: {e}", flush=True)
+                        await asyncio.sleep(_goto_delay)
+                        _goto_delay = min(_goto_delay * 2, 60)
+                    else:
+                        raise
             accounting_monitor_task = asyncio.create_task(self.services.monitor_accounting_ws_health(page))
 
             print(
