@@ -19,6 +19,9 @@ def print_session_stats(
     if not betting_state:
         return
 
+    if not runtime_config.logging.dice_stats_report_enabled:
+        return
+
     colors = runtime_config.colors
 
     total_bets = betting_state.get("total_bets_placed", 0)
@@ -48,6 +51,9 @@ def print_dice_stats_20(
 
     betting_state = runtime_context.betting_state
     if not betting_state:
+        return
+    
+    if not runtime_config.logging.dice_stats_report_enabled:
         return
 
     colors = runtime_config.colors

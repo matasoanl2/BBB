@@ -26,6 +26,7 @@ def build_runtime(app_dir: Path) -> RuntimeComponents:
 
     runtime_config = load_runtime_config(app_dir)
     runtime_context = create_runtime_context(
+        configured_bet_targets=runtime_config.betting.configured_targets,
         bet_mode_outcome=runtime_config.betting.default_outcome,
         bet_mode_specifier=runtime_config.betting.default_specifier,
     )

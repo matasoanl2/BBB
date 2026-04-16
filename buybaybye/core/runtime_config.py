@@ -11,6 +11,65 @@ def _env_bool(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).lower() in {"1", "true", "yes", "on"}
 
 
+@dataclass(frozen=True, slots=True)
+class BetTarget:
+    outcome: str
+    specifier: str = ""
+
+    @property
+    def token(self) -> str:
+        if self.outcome == "double":
+            return "D"
+        prefix = "R" if self.outcome == "red" else "Y"
+        return f"{prefix}{self.specifier}"
+
+def _parse_bet_target_token(raw_token: str) -> BetTarget:
+    token = raw_token.strip().upper()
+    if token == "D":
+        return BetTarget(outcome="double", specifier="")
+
+    if len(token) != 2 or token[0] not in {"R", "Y"} or token[1] not in {"1", "2", "3", "4", "5", "6"}:
+        raise ValueError(
+            f"[ERROR] BET_TARGETS содержит недопустимую цель: {raw_token}. Допустимы только R1-R6, Y1-Y6 или D."
+        )
+
+    return BetTarget(
+        outcome="red" if token[0] == "R" else "yellow",
+        specifier=token[1],
+    )
+
+
+def _parse_bet_targets(raw_value: str | None) -> tuple[tuple[BetTarget, ...], str | None]:
+    if raw_value is None:
+        return tuple(), None
+
+    stripped_value = raw_value.strip()
+    if not stripped_value:
+        return tuple(), "[ERROR] BET_TARGETS пустой. Используйте формат R1,R2,Y3,D."
+
+    parsed_targets: list[BetTarget] = []
+    seen_tokens: set[str] = set()
+    for part in raw_value.split(","):
+        if not part.strip():
+            return tuple(), (
+                f"[ERROR] BET_TARGETS='{raw_value}' содержит пустую цель между запятыми. "
+                "Используйте формат R1,R2,Y3,D без пустых элементов."
+            )
+
+        try:
+            target = _parse_bet_target_token(part)
+        except ValueError as exc:
+            return tuple(), str(exc)
+
+        if target.token in seen_tokens:
+            return tuple(), f"[ERROR] BET_TARGETS='{raw_value}' содержит повторяющуюся цель: {target.token}."
+
+        seen_tokens.add(target.token)
+        parsed_targets.append(target)
+
+    return tuple(parsed_targets), None
+
+
 @dataclass(slots=True)
 class BrowserConfig:
     session_dir: Path
@@ -33,6 +92,9 @@ class DatabaseConfig:
 @dataclass(slots=True)
 class BettingConfig:
     enabled: bool
+    configured_targets: tuple[BetTarget, ...]
+    configured_targets_raw: str
+    configured_targets_error: str | None
     default_outcome: str
     default_specifier: str
     base_bet: float
@@ -82,6 +144,7 @@ class TelegramConfig:
 @dataclass(slots=True)
 class LoggingConfig:
     ws_log_enabled: bool
+    dice_stats_report_enabled: bool
 
 
 @dataclass(slots=True)
@@ -114,6 +177,15 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
     """Загрузить всю конфигурацию рантайма из переменных окружения."""
 
     color_enabled = _env_bool("COLOR_ENABLED", "true")
+    raw_bet_targets = (os.getenv("BET_TARGETS") or "").strip()
+    configured_targets, configured_targets_error = _parse_bet_targets(raw_bet_targets or None)
+    if not configured_targets:
+        configured_targets_error = configured_targets_error or "[ERROR] BET_TARGETS не задан. Используйте формат R1,R2,Y3,D."
+        configured_targets = (BetTarget(outcome="red", specifier="1"),)
+
+    default_target = configured_targets[0]
+    first_outcome = default_target.outcome
+    first_specifier = default_target.specifier or "5"
     colors = ColorConfig(
         enabled=color_enabled,
         green="\033[92m" if color_enabled else "",
@@ -143,8 +215,11 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
         ),
         betting=BettingConfig(
             enabled=_env_bool("BET_MODE"),
-            default_outcome=os.getenv("BET_OUTCOME", "red"),
-            default_specifier=os.getenv("BET_SPECIFIER", "5"),
+            configured_targets=configured_targets,
+            configured_targets_raw=raw_bet_targets,
+            configured_targets_error=configured_targets_error,
+            default_outcome=first_outcome,
+            default_specifier=first_specifier,
             base_bet=float(os.getenv("BASE_BET", "10")),
             strategy_name=os.getenv("STRATEGY", "balanced"),
             bet_delay_min=float(os.getenv("BET_DELAY_MIN", "0.8")),
@@ -183,6 +258,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
         ),
         logging=LoggingConfig(
             ws_log_enabled=_env_bool("WS_LOG_ENABLED"),
+            dice_stats_report_enabled=_env_bool("DICE_STATS_REPORT_ENABLED", "true"),
         ),
         colors=colors,
     )

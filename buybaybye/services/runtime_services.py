@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from buybaybye.modules.betting import place_bet as _betting_place_bet
+from buybaybye.modules.betting import place_bets as _betting_place_bets
 from buybaybye.modules.betting import process_betting_round as _betting_process_betting_round
 from buybaybye.modules.log_formatting import format_round_result_pretty as _format_round_result_pretty
 from buybaybye.modules.notifications import queue_telegram_notification as _notifications_queue_telegram_notification
@@ -139,6 +140,30 @@ class RuntimeServices:
             page,
             outcome,
             specifier,
+            amount,
+            allow_refresh_retry=allow_refresh_retry,
+            runtime_context=self.runtime_context,
+            runtime_config=self.runtime_config,
+            get_jwt_token_func=self.get_jwt_token,
+            validate_base_bet_func=self.validate_base_bet,
+            calculate_roi_func=self.betting.calculate_roi,
+            format_outcome_pretty_func=self.betting.format_outcome_pretty,
+            format_bet_log_func=self.betting.format_bet_log,
+            get_balance_for_log_func=self.get_balance_for_log,
+            get_db_connection_func=self.get_db_connection,
+            is_forbidden_access_error_func=self.is_forbidden_access_error,
+            reload_page_and_refresh_token_func=self.reload_page_and_refresh_token,
+            advance_step_after_set_error_func=self.advance_step_after_set_error,
+            update_runtime_snapshot_func=self.update_runtime_snapshot,
+            queue_telegram_notification_func=self.queue_telegram_notification,
+        )
+
+    async def place_bets(self, page, bet_targets, amount: float, allow_refresh_retry: bool = True) -> bool:
+        """Разместить несколько ставок в одном HTTP-запросе на один игровой раунд."""
+
+        return await _betting_place_bets(
+            page,
+            bet_targets,
             amount,
             allow_refresh_retry=allow_refresh_retry,
             runtime_context=self.runtime_context,
@@ -295,6 +320,7 @@ class RuntimeServices:
             generate_random_bet_func=self.betting.generate_random_bet,
             calculate_bet_amount_func=self.betting.calculate_bet_amount,
             place_bet_func=self.place_bet,
+            place_bets_func=self.place_bets,
         )
 
     def analyze_recent_bets_stats(self) -> dict:

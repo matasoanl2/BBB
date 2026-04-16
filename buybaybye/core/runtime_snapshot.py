@@ -22,6 +22,8 @@ def build_runtime_snapshot(
 
     betting_state = runtime_context.betting_state
     current_strategy = runtime_context.current_strategy
+    multi_bet_enabled = len(runtime_context.get_configured_bet_targets()) > 1 if runtime_config.betting.enabled else False
+    dynamic_bet_mode = runtime_config.dynamic_betting.enabled and not multi_bet_enabled
     strategy_name_value = runtime_config.betting.strategy_name if runtime_config.betting.enabled else None
     strategy_display_name = current_strategy.get("name") if current_strategy else None
     max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else None
@@ -29,7 +31,7 @@ def build_runtime_snapshot(
     snapshot = {
         "event_type": event_type,
         "bet_mode_enabled": runtime_config.betting.enabled,
-        "dynamic_bet_mode": runtime_config.dynamic_betting.enabled,
+        "dynamic_bet_mode": dynamic_bet_mode,
         "strategy_name": strategy_name_value,
         "strategy_display_name": strategy_display_name,
         "current_step": betting_state.get("current_step") if betting_state else None,
@@ -50,10 +52,17 @@ def build_runtime_snapshot(
         "total_bet_amount": betting_state.get("total_bet_amount") if betting_state else 0.0,
         "total_bets_placed": betting_state.get("total_bets_placed") if betting_state else 0,
         "pending_expected_bet_drop": betting_state.get("pending_expected_bet_drop") if betting_state else 0.0,
+        "pending_bets_count": len(betting_state.get("pending_bets", [])) if betting_state else 0,
         "external_deposits_total": betting_state.get("external_deposits_total") if betting_state else 0.0,
         "external_withdrawals_total": betting_state.get("external_withdrawals_total") if betting_state else 0.0,
+        "configured_targets": [target.token for target in runtime_context.get_configured_bet_targets()] if runtime_config.betting.enabled else [],
+        "configured_outcome": runtime_context.bet_mode_outcome if runtime_config.betting.enabled else None,
         "current_outcome": runtime_context.bet_mode_outcome if runtime_config.betting.enabled else None,
         "current_specifier": runtime_context.bet_mode_specifier if runtime_config.betting.enabled else None,
+        "configured_specifiers": [target.specifier for target in runtime_context.get_configured_bet_targets() if target.specifier] if runtime_config.betting.enabled else [],
+        "configured_specifier_index": 0,
+        "specifier_rotation_enabled": False,
+        "multi_bet_enabled": multi_bet_enabled,
         "dynamic_outcome": betting_state.get("dynamic_outcome") if betting_state else None,
         "dynamic_specifier": betting_state.get("dynamic_specifier") if betting_state else None,
         "dynamic_use_average_value_selection": runtime_config.dynamic_betting.use_average_value_selection,

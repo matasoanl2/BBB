@@ -9,6 +9,15 @@ from buybaybye.core.runtime_context import RuntimeContext
 from buybaybye.core.runtime_config import RuntimeConfig
 
 
+def _format_configured_target(runtime_context: RuntimeContext) -> str:
+    configured_targets = runtime_context.get_configured_bet_targets()
+    if not configured_targets:
+        return "-"
+    if len(configured_targets) == 1:
+        return configured_targets[0].token
+    return f"{', '.join(target.token for target in configured_targets)} (одновременно)"
+
+
 def print_strategy_startup_info(
     *,
     runtime_context: RuntimeContext,
@@ -19,17 +28,23 @@ def print_strategy_startup_info(
 
     current_strategy = runtime_context.current_strategy
     dynamic_config = runtime_config.dynamic_betting
+    multi_bet_enabled = len(runtime_context.get_configured_bet_targets()) > 1
+    dynamic_mode_effective = dynamic_config.enabled and not multi_bet_enabled
     base_bet = runtime_config.betting.base_bet
     print(f"[STRATEGY] Загружена стратегия: {current_strategy['name']}", flush=True)
     print(f"[STRATEGY] Описание: {current_strategy['description']}", flush=True)
     print(f"[STRATEGY] Шагов: {len(current_strategy['coefficients'])}, базовая ставка: {base_bet}р", flush=True)
+    print(f"[STRATEGY] Цель ставки: {_format_configured_target(runtime_context)}", flush=True)
     print("[STRATEGY] Примеры ставок (BASE_BET × коэффициент):", flush=True)
     for index in range(min(5, len(current_strategy["coefficients"]))):
         coeff = current_strategy["coefficients"][index]
         bet_amount = base_bet * coeff
         print(f"  Step {index+1}: {base_bet}р × {coeff} = {bet_amount}р ✓", flush=True)
 
-    if dynamic_config.enabled:
+    if dynamic_config.enabled and multi_bet_enabled:
+        print("[DYNAMIC] Задано несколько целей BET_TARGETS, динамический режим проигнорирован", flush=True)
+
+    if dynamic_mode_effective:
         print("\n[DYNAMIC] 🔄 ДИНАМИЧЕСКИЙ РЕЖИМ ВКЛЮЧЕН", flush=True)
         print(f"[DYNAMIC] Окно анализа: {dynamic_config.window_size} ставок", flush=True)
         print(f"[DYNAMIC] Пересчет: каждые {dynamic_config.recalc_interval} ставок", flush=True)
@@ -77,7 +92,7 @@ def build_runtime_status_line(
     if runtime_config.betting.enabled and runtime_context.current_strategy:
         status_line += "🎲 РЕЖИМ СТАВОК ВКЛЮЧЕН\n"
         status_line += f"  - Стратегия: {runtime_context.current_strategy['name']}\n"
-        status_line += f"  - Цель: {runtime_context.bet_mode_outcome} = {runtime_context.bet_mode_specifier}\n"
+        status_line += f"  - Цель: {_format_configured_target(runtime_context)}\n"
         status_line += f"  - Базовая ставка: {runtime_config.betting.base_bet}р\n"
         status_line += f"  - Коэффициентов в прогрессии: {len(runtime_context.current_strategy['coefficients'])}\n"
         status_line += f"  - Задержка перед ставкой: {runtime_config.betting.bet_delay_min:.1f}-{runtime_config.betting.bet_delay_max:.1f}с\n"

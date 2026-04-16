@@ -38,6 +38,22 @@ class RuntimeApp:
         if not self.runtime_config.betting.enabled:
             return
 
+        betting_config = self.runtime_config.betting
+        configured_targets = self.runtime_context.get_configured_bet_targets()
+        if betting_config.configured_targets_error:
+            print(betting_config.configured_targets_error, flush=True)
+            sys.exit(1)
+
+        if not configured_targets:
+            print("[ERROR] Не удалось определить ни одной цели ставки.", flush=True)
+            sys.exit(1)
+
+        if self.runtime_config.dynamic_betting.enabled and len(configured_targets) > 1:
+            print(
+                "[WARNING] Задано несколько целей в BET_TARGETS, поэтому DYNAMIC_BET_MODE будет проигнорирован для этого запуска.",
+                flush=True,
+            )
+
         strategy_name = self.runtime_config.betting.strategy_name
         if strategy_name not in self.runtime_context.loaded_strategies:
             print(f"[ERROR] Стратегия '{strategy_name}' не найдена. Доступные:", flush=True)

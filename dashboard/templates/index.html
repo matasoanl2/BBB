@@ -983,9 +983,39 @@
             if (node) node.textContent = value;
         }
 
+        function formatTarget(snapshot) {
+            const configuredTargets = Array.isArray(snapshot.configured_targets)
+                ? snapshot.configured_targets.filter((value) => value !== null && value !== undefined && `${value}`.trim() !== "")
+                : [];
+            if (configuredTargets.length > 1 || snapshot.multi_bet_enabled) {
+                return `${configuredTargets.join(", ")} (один раунд)`;
+            }
+
+            const currentOutcome = snapshot.current_outcome;
+            if (!currentOutcome) {
+                return "-";
+            }
+
+            const configuredOutcome = snapshot.configured_outcome || currentOutcome;
+            const configuredSpecifiers = Array.isArray(snapshot.configured_specifiers)
+                ? snapshot.configured_specifiers.filter((value) => value !== null && value !== undefined && `${value}`.trim() !== "")
+                : [];
+
+            if (String(configuredOutcome).toLowerCase() === "double") {
+                return "DOUBLE";
+            }
+
+            if (snapshot.specifier_rotation_enabled && configuredSpecifiers.length > 1) {
+                const activeSpecifier = snapshot.current_specifier || configuredSpecifiers[0];
+                return `${String(configuredOutcome).toUpperCase()} ${configuredSpecifiers.join(", ")} (по кругу, сейчас ${activeSpecifier})`;
+            }
+
+            return `${String(currentOutcome).toUpperCase()} ${snapshot.current_specifier || ""}`.trim();
+        }
+
         function renderSummary(snapshot, summary) {
             setText("strategyName", snapshot.strategy_display_name || "Нет активной стратегии");
-            setText("currentTarget", snapshot.current_outcome ? `${String(snapshot.current_outcome).toUpperCase()} ${snapshot.current_specifier || ""}`.trim() : "-");
+            setText("currentTarget", formatTarget(snapshot));
             setText("updatedAt", fmtDateTime(snapshot.updated_at));
             setText("sessionBalance", fmtMoney(summary.session_balance));
             setText("realBalance", fmtMoney(summary.account_balance));
