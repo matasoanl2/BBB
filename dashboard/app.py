@@ -62,6 +62,7 @@ def _ensure_dashboard_schema() -> None:
             status TEXT,
             result_dice_color TEXT,
             result_dice_value INTEGER,
+
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
         )
         """
@@ -154,24 +155,35 @@ def _parse_round(row: dict[str, Any]) -> dict[str, Any]:
     dice = dice_results.get("dice", []) if isinstance(dice_results, dict) else []
     player = dice_results.get("player", {}) if isinstance(dice_results, dict) else {}
     position = player.get("position") if isinstance(player, dict) else None
+
+    # Всегда явно сериализуем оба значения кубиков
     red_value = None
     yellow_value = None
 
+    # Собираем значения кубиков по цвету
     for die in dice:
         if not isinstance(die, dict):
             continue
-        if die.get("color") == "red":
-            red_value = die.get("value")
-        if die.get("color") == "yellow":
-            yellow_value = die.get("value")
+        color = die.get("color")
+        value = die.get("value")
+        if color == "red":
+            red_value = value
+        elif color == "yellow":
+            yellow_value = value
 
-    is_double = red_value is not None and red_value == yellow_value
+    # Если какого-то кубика нет, явно выставляем None
+    if red_value is None:
+        red_value = None
+    if yellow_value is None:
+        yellow_value = None
+
+    is_double = red_value is not None and yellow_value is not None and red_value == yellow_value
     if red_value is None and yellow_value is None:
         display = "-"
     elif is_double:
         display = f"DOUBLE {red_value}"
     else:
-        display = f"RED {red_value or '-'} / YELLOW {yellow_value or '-'}"
+        display = f"RED {red_value if red_value is not None else '-'} / YELLOW {yellow_value if yellow_value is not None else '-'}"
 
     return {
         "id": row.get("id"),
@@ -303,14 +315,25 @@ def _get_latest_win() -> dict[str, Any] | None:
 
     row = _fetch_one(
         """
-        SELECT id, timestamp, outcome, specifier, amount, strategy, bet_step, status,
-               result_dice_color, result_dice_value
-        FROM bet_history
-        WHERE status = 'win'
-        ORDER BY id DESC
+        SELECT bh.id, bh.timestamp, bh.outcome, bh.specifier, bh.amount, bh.strategy, 
+               bh.bet_step, bh.status, bh.result_dice_color, bh.result_dice_value, 
+               gr.red_value, gr.yellow_value
+        FROM bet_history bh
+        LEFT JOIN LATERAL (
+            SELECT gr.id, gr.timestamp, 
+                   (gr.dice_results->'dice')::jsonb->0->>'value' AS red_value,
+                   (gr.dice_results->'dice')::jsonb->1->>'value' AS yellow_value
+            FROM game_results gr
+            WHERE gr.timestamp >= bh.timestamp
+            ORDER BY gr.timestamp ASC
+            LIMIT 1
+        ) gr ON TRUE
+        WHERE bh.status = 'win'
+        ORDER BY bh.id DESC
         LIMIT 1
         """
     )
+
     if not row:
         return None
 
@@ -323,6 +346,8 @@ def _get_latest_win() -> dict[str, Any] | None:
         "step": (row.get("bet_step") + 1) if isinstance(row.get("bet_step"), int) else None,
         "status": row.get("status"),
         "result": _format_target(row.get("result_dice_color"), row.get("result_dice_value")),
+        "red_value": row.get("red_value"),
+        "yellow_value": row.get("yellow_value"),
     }
 
 
