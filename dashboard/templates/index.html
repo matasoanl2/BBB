@@ -620,6 +620,16 @@
             table { min-width: 560px; }
             .mini-metrics { grid-template-columns: 1fr; }
         }
+
+        @media (max-width: 768px) {
+            #winOverlayResult {
+                font-size: 14px;
+                line-height: 1.5;
+                word-wrap: break-word;
+                text-align: center;
+                padding: 10px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -917,7 +927,14 @@
             setText("winOverlayTarget", `Ставка ${bet.target || "-"} зашла`);
             setText("winOverlayAmount", fmtMoney(bet.amount));
             setText("winOverlayStep", `Шаг: ${bet.step || "-"}`);
-            setText("winOverlayResult", `Результат: ${bet.result || "-"}`);
+
+            // Формируем строку с результатами кубиков
+            const red = ("red_value" in bet) ? bet.red_value : undefined;
+            const yellow = ("yellow_value" in bet) ? bet.yellow_value : undefined;
+            const redStr = (red !== undefined && red !== null && red !== "") ? red : "-";
+            const yellowStr = (yellow !== undefined && yellow !== null && yellow !== "") ? yellow : "-";
+            const diceResult = `Красный: ${redStr}, Жёлтый: ${yellowStr}`;
+            setText("winOverlayResult", diceResult);
 
             renderWinConfetti();
             overlay.classList.remove("active");
@@ -1027,16 +1044,21 @@
                 return;
             }
 
-            body.innerHTML = rounds.map((round) => `
-                <tr>
-                    <td class="mono">${fmtShortTime(round.timestamp)}</td>
-                    <td>${round.player_name || "unknown"}</td>
-                    <td>${round.position || "-"}</td>
-                    <td>${round.red_value ?? "-"}</td>
-                    <td>${round.yellow_value ?? "-"}</td>
-                    <td>${round.display}</td>
-                </tr>
-            `).join("");
+            body.innerHTML = rounds.map((round) => {
+                // Цветовые подписи для значений
+                const red = `<span style="color:#b64432;font-weight:600">RED: ${round.red_value ?? '-'}</span>`;
+                const yellow = `<span style="color:#bb7a22;font-weight:600">YELLOW: ${round.yellow_value ?? '-'}</span>`;
+                return `
+                    <tr>
+                        <td class="mono">${fmtShortTime(round.timestamp)}</td>
+                        <td>${round.player_name || "unknown"}</td>
+                        <td>${round.position || "-"}</td>
+                        <td>${round.red_value ?? "-"}</td>
+                        <td>${round.yellow_value ?? "-"}</td>
+                        <td>${red}, ${yellow}</td>
+                    </tr>
+                `;
+            }).join("");
         }
 
         function renderEvents(events) {
