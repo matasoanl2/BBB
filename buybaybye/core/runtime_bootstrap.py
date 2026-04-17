@@ -88,7 +88,11 @@ def build_runtime_status_line(
 ) -> str:
     """Собрать человекочитаемую status line для запущенного runtime-сеанса."""
 
-    status_line = f"Браузер открыт. Профиль сессии: {runtime_config.browser.session_dir}\n"
+    status_line = f"Браузер открыт. Роль рантайма: {runtime_config.role.name}\n"
+    if runtime_config.role.uses_persistent_browser_profile:
+        status_line += f"Профиль сессии: {runtime_config.browser.session_dir}\n"
+    else:
+        status_line += "Профиль сессии: не используется, контекст эфемерный\n"
     if runtime_config.betting.enabled and runtime_context.current_strategy:
         status_line += "🎲 РЕЖИМ СТАВОК ВКЛЮЧЕН\n"
         status_line += f"  - Стратегия: {runtime_context.current_strategy['name']}\n"
@@ -96,9 +100,14 @@ def build_runtime_status_line(
         status_line += f"  - Базовая ставка: {runtime_config.betting.base_bet}р\n"
         status_line += f"  - Коэффициентов в прогрессии: {len(runtime_context.current_strategy['coefficients'])}\n"
         status_line += f"  - Задержка перед ставкой: {runtime_config.betting.bet_delay_min:.1f}-{runtime_config.betting.bet_delay_max:.1f}с\n"
+    elif runtime_config.betting.requested_enabled and not runtime_config.betting.enabled:
+        status_line += "🎲 РЕЖИМ СТАВОК ПРИНУДИТЕЛЬНО ОТКЛЮЧЕН ДЛЯ ТЕКУЩЕЙ РОЛИ\n"
     status_line += f"  - Accounting stale timeout: {runtime_config.accounting.balance_stale_seconds:.0f}с\n"
     status_line += f"  - Accounting recovery reload: {runtime_config.accounting.recovery_reload_seconds:.0f}с\n"
-    status_line += "Закройте окно браузера или нажмите Enter здесь - сессия сохранится."
+    if runtime_config.role.uses_persistent_browser_profile:
+        status_line += "Закройте окно браузера или нажмите Enter здесь - сессия сохранится."
+    else:
+        status_line += "Закройте окно браузера или нажмите Enter здесь - сессия завершится без сохранения профиля."
     return status_line
 
 

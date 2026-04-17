@@ -80,6 +80,14 @@ class BrowserConfig:
     headless: bool
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeRoleConfig:
+    name: str
+    uses_persistent_browser_profile: bool
+    can_place_bets: bool
+    writes_round_results: bool
+
+
 @dataclass(slots=True)
 class DatabaseConfig:
     user: str
@@ -91,6 +99,7 @@ class DatabaseConfig:
 
 @dataclass(slots=True)
 class BettingConfig:
+    requested_enabled: bool
     enabled: bool
     configured_targets: tuple[BetTarget, ...]
     configured_targets_raw: str
@@ -109,6 +118,7 @@ class DynamicBettingConfig:
     enabled: bool
     window_size: int
     recalc_interval: int
+    # Показывать ли вывод анализа, если выбранная цель ставки не изменилась.
     unchanged_analysis_output_enabled: bool
     use_average_value_selection: bool
     include_double_selection: bool
@@ -164,6 +174,7 @@ class ColorConfig:
 class RuntimeConfig:
     """Верхнеуровневая неизменяемая конфигурация рантайма, собранная из env."""
 
+    role: RuntimeRoleConfig
     browser: BrowserConfig
     database: DatabaseConfig
     betting: BettingConfig
@@ -174,10 +185,37 @@ class RuntimeConfig:
     colors: ColorConfig
 
 
+def _load_runtime_role(raw_value: str | None, *, requested_betting_enabled: bool) -> RuntimeRoleConfig:
+    normalized_value = (raw_value or ("bettor" if requested_betting_enabled else "collector")).strip().lower()
+
+    if normalized_value == "collector":
+        return RuntimeRoleConfig(
+            name="collector",
+            uses_persistent_browser_profile=False,
+            can_place_bets=False,
+            writes_round_results=True,
+        )
+
+    if normalized_value == "bettor":
+        return RuntimeRoleConfig(
+            name="bettor",
+            uses_persistent_browser_profile=True,
+            can_place_bets=True,
+            writes_round_results=False,
+        )
+
+    raise ValueError("[ERROR] RUNTIME_ROLE должен быть collector или bettor.")
+
+
 def load_runtime_config(app_dir: Path) -> RuntimeConfig:
     """Загрузить всю конфигурацию рантайма из переменных окружения."""
 
     color_enabled = _env_bool("COLOR_ENABLED", "true")
+    requested_betting_enabled = _env_bool("BET_MODE")
+    runtime_role = _load_runtime_role(
+        os.getenv("RUNTIME_ROLE"),
+        requested_betting_enabled=requested_betting_enabled,
+    )
     raw_bet_targets = (os.getenv("BET_TARGETS") or "").strip()
     configured_targets, configured_targets_error = _parse_bet_targets(raw_bet_targets or None)
     if not configured_targets:
@@ -199,6 +237,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
     )
 
     return RuntimeConfig(
+        role=runtime_role,
         browser=BrowserConfig(
             session_dir=app_dir / "profile",
             strategies_dir=app_dir / "strategies",
@@ -215,7 +254,8 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             name=os.getenv("DB_NAME", "buybaybye"),
         ),
         betting=BettingConfig(
-            enabled=_env_bool("BET_MODE"),
+            requested_enabled=requested_betting_enabled,
+            enabled=requested_betting_enabled and runtime_role.can_place_bets,
             configured_targets=configured_targets,
             configured_targets_raw=raw_bet_targets,
             configured_targets_error=configured_targets_error,

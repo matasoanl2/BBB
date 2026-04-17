@@ -22,10 +22,76 @@ class RuntimeApp:
         self.runtime_context = runtime_context
         self.services = services
 
+    def _build_shared_runtime_state(self) -> dict:
+        """Создать базовую форму runtime state, безопасную для collector и bettor."""
+
+        return {
+            "current_step": 0,
+            "consecutive_losses": 0,
+            "session_balance": 0.0,
+            "account_balance": None,
+            "account_balance_type": None,
+            "account_balance_updated_at": None,
+            "last_accounting_ws_message_at": None,
+            "last_accounting_ws_opened_at": None,
+            "last_accounting_ws_closed_at": None,
+            "accounting_ws_connected": False,
+            "last_accounting_rejection_reason": None,
+            "last_accounting_recovery_at": None,
+            "accounting_recovery_attempts": 0,
+            "pending_expected_bet_drop": 0.0,
+            "pending_expected_settlement_credit": 0.0,
+            "external_deposits_total": 0.0,
+            "external_withdrawals_total": 0.0,
+            "low_balance_pause_active": False,
+            "low_balance_pause_required_balance": 0.0,
+            "low_balance_pause_started_at": None,
+            "low_balance_pause_targets": [],
+            "last_bet_amount": 0.0,
+            "last_set_amount": 0.0,
+            "last_set_status": None,
+            "last_set_error": None,
+            "total_bet_amount": 0.0,
+            "total_profit": 0.0,
+            "total_bets_placed": 0,
+            "total_bet_rounds": 0,
+            "last_bet_round_number": 0,
+            "last_round_result": None,
+            "last_round_game_id": None,
+            "last_round_status": None,
+            "last_round_timestamp": None,
+            "last_round_player_name": None,
+            "last_round_position": None,
+            "combo_stats": {
+                "red_1": 0, "red_2": 0, "red_3": 0, "red_4": 0, "red_5": 0, "red_6": 0,
+                "yellow_1": 0, "yellow_2": 0, "yellow_3": 0, "yellow_4": 0, "yellow_5": 0, "yellow_6": 0,
+            },
+            "double_stats": {"doubles": 0, "no_doubles": 0},
+            "reported_20_rounds": [],
+            "recent_bets": [],
+            "pending_bets": [],
+            "dynamic_outcome": self.runtime_context.bet_mode_outcome,
+            "dynamic_specifier": self.runtime_context.bet_mode_specifier,
+            "strategy": None,
+        }
+
     def initialize_runtime_state(self) -> None:
         """Подготовить стратегии, betting state и startup snapshot перед запуском."""
 
-        self.runtime_config.browser.session_dir.mkdir(parents=True, exist_ok=True)
+        self.runtime_context.betting_state = self._build_shared_runtime_state()
+
+        if self.runtime_config.role.uses_persistent_browser_profile:
+            self.runtime_config.browser.session_dir.mkdir(parents=True, exist_ok=True)
+
+        if not self.runtime_config.betting.enabled:
+            if self.runtime_config.betting.requested_enabled and not self.runtime_config.role.can_place_bets:
+                print(
+                    "[WARNING] RUNTIME_ROLE=collector: BET_MODE принудительно отключен, ставки размещаться не будут.",
+                    flush=True,
+                )
+            self.services.update_runtime_snapshot("startup")
+            return
+
         self.runtime_context.loaded_strategies = load_strategies(
             self.runtime_config.browser.strategies_dir,
             self.runtime_config.betting.base_bet,
@@ -34,9 +100,6 @@ class RuntimeApp:
         if not self.services.validate_base_bet(self.runtime_config.betting.base_bet):
             print(f"[ERROR] BASE_BET ({self.runtime_config.betting.base_bet}) должна делиться на 10 нацело", flush=True)
             sys.exit(1)
-
-        if not self.runtime_config.betting.enabled:
-            return
 
         betting_config = self.runtime_config.betting
         configured_targets = self.runtime_context.get_configured_bet_targets()
@@ -81,15 +144,24 @@ class RuntimeApp:
 
         playwright = await async_playwright().start()
         self.runtime_context.page_reload_lock = asyncio.Lock()
-        context = await playwright.chromium.launch_persistent_context(
-            user_data_dir=str(self.runtime_config.browser.session_dir),
-            headless=self.runtime_config.browser.headless,
-            args=get_browser_launch_args(),
-        )
+        browser = None
+        if self.runtime_config.role.uses_persistent_browser_profile:
+            context = await playwright.chromium.launch_persistent_context(
+                user_data_dir=str(self.runtime_config.browser.session_dir),
+                headless=self.runtime_config.browser.headless,
+                args=get_browser_launch_args(),
+            )
+        else:
+            browser = await playwright.chromium.launch(
+                headless=self.runtime_config.browser.headless,
+                args=get_browser_launch_args(),
+            )
+            context = await browser.new_context()
         accounting_monitor_task = None
 
         try:
-            for existing_page in context.pages:
+            initial_pages = list(context.pages)
+            for existing_page in initial_pages:
                 self.services.wire_ws_logging(existing_page)
                 self.services.subscribe_jwt_search_to_page(existing_page)
 
@@ -97,6 +169,9 @@ class RuntimeApp:
             context.on("page", self.services.subscribe_jwt_search_to_page)
 
             page = context.pages[0] if context.pages else await context.new_page()
+            if page not in initial_pages:
+                self.services.wire_ws_logging(page)
+                self.services.subscribe_jwt_search_to_page(page)
 
             print("[DEBUG] Поиск JWT токена в ответах...", flush=True)
             _goto_delay = 5
@@ -111,7 +186,8 @@ class RuntimeApp:
                         _goto_delay = min(_goto_delay * 2, 60)
                     else:
                         raise
-            accounting_monitor_task = asyncio.create_task(self.services.monitor_accounting_ws_health(page))
+            if self.runtime_config.betting.enabled:
+                accounting_monitor_task = asyncio.create_task(self.services.monitor_accounting_ws_health(page))
 
             print(
                 build_runtime_status_line(
@@ -129,9 +205,14 @@ class RuntimeApp:
                 except asyncio.CancelledError:
                     pass
             await context.close()
+            if browser is not None:
+                await browser.close()
             await playwright.stop()
 
         if self.runtime_config.betting.enabled and self.runtime_context.betting_state:
             self.services.print_session_stats()
 
-        print("Контекст закрыт, профиль записан. Следующий запуск продолжит ту же сессию.", flush=True)
+        if self.runtime_config.role.uses_persistent_browser_profile:
+            print("Контекст закрыт, профиль записан. Следующий запуск продолжит ту же сессию.", flush=True)
+        else:
+            print("Контекст закрыт, collector-роль работала без сохранения браузерного профиля.", flush=True)

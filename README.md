@@ -97,18 +97,25 @@ docker compose up -d dashboard
 http://localhost:8000
 ```
 
-### main.py — Сборщик данных в PostgreSQL + Режим ставок со стратегией
+### main.py — Рантайм collector/bettor для сбора раундов и размещения ставок
 
 Использует **Patchright** для автоматизации браузера:
 
 - Подключается к WebSocket серверу betboom.ru: `wss://ws.betboom.ru:444/api/nards_studio_ws/v1`
 - Перехватывает все WebSocket сообщения
 - Фильтрует сообщения со статусом `rng_values` (результаты кубиков)
-- **Сохраняет данные в PostgreSQL** с UTC временными метками
-- **Поддерживает автоматическое размещение ставок** с системой стратегий из YAML
+- В роли `collector` **сохраняет данные в PostgreSQL** с UTC временными метками
+- В роли `bettor` **поддерживает автоматическое размещение ставок** с системой стратегий из YAML
 - **Случайная задержка** перед ставкой (BET_DELAY_MIN-MAX) для "человеческого" поведения
-- Поддерживает постоянную сессию браузера (профиль в папке `profile/`)
+- `collector` работает без persistent browser profile, `bettor` использует профиль в папке `profile/`
 - Headless режим через переменную окружения `HEADLESS`
+
+#### Разделение ролей и потоков данных
+
+- `RUNTIME_ROLE=collector` — открывает эфемерный браузерный контекст, не ставит, не хранит профиль, пишет `game_results`
+- `RUNTIME_ROLE=bettor` — использует persistent profile, может ставить, пишет `bet_history`, но не дублирует `game_results`
+- `runtime_snapshot` и `runtime_events` пишутся с role-маркером, поэтому dashboard может показывать актуальный живой поток без смешивания collector и bettor
+- Для production-схемы рекомендуется держать оба процесса одновременно: collector как единственный writer игровых раундов и bettor как единственный writer ставок
 
 #### Внутренний layout рантайма
 
@@ -662,12 +669,14 @@ wcwidth
 
 **docker-compose.yml:**
 - **postgres** сервис: PostgreSQL 15 Alpine
-- **app** сервис: Patchright приложение
+- **collector** сервис: сбор игровых раундов без профиля браузера
+- **bettor** сервис: рантайм со ставками и persistent profile
+- **dashboard** сервис: FastAPI мониторинг
 - БД файлы сохраняются в `./postgres_data/` (вне контейнера)
 - Автоматическое создание БД `buybaybye`- Параметры ставок настраиваются через переменные окружения
 ### Структура томов:
 ```
-./profile/          → /app/profile (профиль браузера)
+./profile_docker/   → /app/profile (persistent профиль для bettor)
 ./postgres_data/    → /var/lib/postgresql/data (БД вне контейнера)
 ```
 
@@ -679,10 +688,10 @@ wcwidth
 
 **Пошаговая инструкция:**
 
-**Шаг 1: Запустить приложение в режиме "только сбор данных" (БЕЗ ставок)**
+**Шаг 1: Запустить bettor в режиме ручной авторизации (БЕЗ ставок)**
 ```bash
-# Убедитесь, что PostgreSQL запущен!
-python main.py
+# Убедитесь, что PostgreSQL запущен
+RUNTIME_ROLE=bettor BET_MODE=false python main.py
 ```
 - Браузер откроется и загрузит betboom.ru
 - Браузер будет **видимым** (если HEADLESS=false в .env или переменных окружения)
@@ -702,7 +711,7 @@ python main.py
 
 **Шаг 4: Закрыть браузер (сохранить профиль)**
 - В консоли приложения нажмите **Enter** или закройте окно браузера
-- Приложение выведет: `Сессия сохранится`
+- Приложение выведет, что профиль будет сохранён
 - Профиль браузера сохранён в папке `./profile/`
 
 **Шаг 5: Проверить сохранение профиля**
@@ -751,17 +760,18 @@ python main.py
    pip install -r requirements.txt
    ```
 
-3. **Запустить сборщик данных (без ставок):**
+3. **Запустить collector без ставок и без профиля:**
    ```bash
-   python main.py
+   RUNTIME_ROLE=collector BET_MODE=false python main.py
    ```
-   - Браузер откроется и подключится к betboom.ru
-   - Данные будут сохраняться в PostgreSQL
+   - Браузер откроется в эфемерном контексте и подключится к betboom.ru
+   - Данные будут сохраняться в PostgreSQL только через collector
    - Остановить: Ctrl+C
 
-4. **Запустить с другой стратегией:**
+4. **Запустить bettor с профилем и стратегией:**
    ```bash
    # Fibonacci агрессивная
+   export RUNTIME_ROLE=bettor
    export BET_MODE=true
    export STRATEGY=fibonacci_aggressive
    export BASE_BET=20
@@ -797,11 +807,12 @@ python main.py
 # Убедитесь, что PostgreSQL запущен
 docker-compose up postgres -d
 
-# Запустить приложение В HEADLESS=false режиме (видимый браузер)
-docker-compose run --rm \
+# Запустить bettor В HEADLESS=false режиме (видимый браузер)
+docker compose run --rm \
+   -e RUNTIME_ROLE=bettor \
   -e HEADLESS=false \
   -e BET_MODE=false \
-  app python main.py
+   bettor python main.py
 ```
 
 Затем следуйте той же инструкции (авторизуйтесь вручную и закройте браузер).
@@ -810,23 +821,16 @@ docker-compose run --rm \
 - Используйте **локальный запуск** для создания профиля (см. выше)
 - Или используйте **VNC** для удалённого доступа к дисплею контейнера
 
-#### Шаг 2: Запуск с автоматическими ставками
+#### Шаг 2: Запуск разделённого контура
 
-После создания профиля просто отредактируйте `docker-compose.yml`:
+После создания профиля запустите оба рантайма вместе:
 
-```yaml
-environment:
-   BET_MODE: "true"
-   STRATEGY: "balanced"
-   BET_TARGETS: "R1,R2,Y3,D"
-   BASE_BET: "10"
-```
-
-Затем запустите:
 ```bash
-docker-compose up -d
-docker-compose logs -f app | grep -E "(STRATEGY|BET|RES)"
+docker compose up -d postgres collector bettor dashboard
+docker compose logs -f bettor
 ```
+
+`collector` будет собирать `game_results` без профиля, а `bettor` будет ставить из сохранённого профиля и не станет дублировать игровые раунды в базе.
 
 #### Запуск отдельных команд в контейнере
 

@@ -16,11 +16,11 @@ services:
       timeout: 5s
       retries: 5
 
-  app:
+  collector:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: bb-patchright
+    container_name: bb-collector
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,6 +30,29 @@ services:
       PYTHONUNBUFFERED: "1"
       DB_HOST: postgres
       HEADLESS: "true"
+      RUNTIME_ROLE: collector
+      BET_MODE: "false"
+    volumes:
+      - ./strategies:/app/strategies:ro
+    shm_size: "1gb"
+    stdin_open: true
+    tty: true
+
+  bettor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bb-bettor
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      DB_HOST: postgres
+      HEADLESS: "true"
+      RUNTIME_ROLE: bettor
     volumes:
       - ./profile_docker:/app/profile
       - ./strategies:/app/strategies:ro

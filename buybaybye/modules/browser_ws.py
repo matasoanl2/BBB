@@ -55,7 +55,8 @@ def wire_ws_logging(
                 update_balance_from_accounting_payload_func(payload)
 
             if is_target:
-                save_target_ws_message_func(payload)
+                if runtime_config.role.writes_round_results:
+                    save_target_ws_message_func(payload)
                 if runtime_config.betting.enabled:
                     asyncio.create_task(process_betting_round_func(page, payload))
 

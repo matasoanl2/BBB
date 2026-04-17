@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,55 @@ BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 app = FastAPI(title="BuyBayBye Dashboard")
+
+
+DEFAULT_SNAPSHOT = {
+    "event_type": "boot",
+    "updated_at": None,
+    "snapshot_key": None,
+    "runtime_role": None,
+    "bet_mode_enabled": False,
+    "dynamic_bet_mode": False,
+    "strategy_display_name": None,
+    "current_step": None,
+    "max_steps": None,
+    "consecutive_losses": 0,
+    "session_balance": 0.0,
+    "account_balance": None,
+    "total_profit": 0.0,
+    "total_bets_placed": 0,
+    "external_deposits_total": 0.0,
+    "external_withdrawals_total": 0.0,
+    "configured_outcome": None,
+    "configured_targets": [],
+    "current_outcome": None,
+    "current_specifier": None,
+    "configured_specifiers": [],
+    "configured_specifier_index": 0,
+    "specifier_rotation_enabled": False,
+    "multi_bet_enabled": False,
+    "last_round_result": None,
+    "last_set_status": None,
+    "last_set_error": None,
+}
+
+RUNTIME_ROLE_FIELDS = (
+    "runtime_role",
+    "role",
+    "service_role",
+    "instance_role",
+    "container_role",
+    "app_role",
+)
+
+
+def _build_default_snapshot() -> dict[str, Any]:
+    """Создать новый словарь snapshot defaults без разделяемых mutable-значений."""
+
+    snapshot = dict(DEFAULT_SNAPSHOT)
+    snapshot["configured_targets"] = []
+    snapshot["configured_specifiers"] = []
+    return snapshot
 
 
 def _get_db_connection():
@@ -148,6 +197,96 @@ def _format_target(outcome: str | None, specifier: str | None) -> str:
     return outcome.upper()
 
 
+def _normalize_runtime_role(value: Any) -> str | None:
+    """Привести возможные варианты role-маркера к bettor или collector."""
+
+    if not isinstance(value, str):
+        return None
+
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    if not normalized:
+        return None
+    if "bettor" in normalized or "betting" in normalized:
+        return "bettor"
+    if "collector" in normalized or normalized.startswith("collect"):
+        return "collector"
+    return None
+
+
+def _extract_runtime_role(payload: dict[str, Any] | None, snapshot_key: str | None = None) -> str | None:
+    """Определить runtime role из payload metadata или из имени snapshot key."""
+
+    if isinstance(payload, dict):
+        for field_name in RUNTIME_ROLE_FIELDS:
+            role = _normalize_runtime_role(payload.get(field_name))
+            if role:
+                return role
+    return _normalize_runtime_role(snapshot_key)
+
+
+def _snapshot_priority(snapshot_key: str | None, runtime_role: str | None) -> int:
+    """Вернуть приоритет snapshot-источника: bettor -> collector -> legacy live -> прочее."""
+
+    if runtime_role == "bettor":
+        return 0
+    if runtime_role == "collector":
+        return 1
+    if snapshot_key == "live":
+        return 2
+    return 3
+
+
+def _snapshot_updated_at_sort_value(value: Any) -> datetime:
+    """Нормализовать updated_at для стабильного сравнения snapshot-строк."""
+
+    if isinstance(value, datetime):
+        return value
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _select_runtime_event_rows(limit: int, preferred_role: str | None = None) -> tuple[list[dict[str, Any]], str | None]:
+    """Выбрать согласованный поток runtime events без смешивания bettor и collector."""
+
+    fetch_limit = max(limit * 6, limit)
+    rows = _fetch_all(
+        """
+        SELECT id, timestamp, event_type, payload
+        FROM runtime_events
+        ORDER BY id DESC
+        LIMIT %s
+        """,
+        (fetch_limit,),
+    )
+
+    annotated_rows = []
+    tagged_roles: set[str] = set()
+    for row in rows:
+        payload = row.get("payload") or {}
+        runtime_role = _extract_runtime_role(payload)
+        if runtime_role:
+            tagged_roles.add(runtime_role)
+        annotated = dict(row)
+        annotated["payload"] = payload
+        annotated["runtime_role"] = runtime_role
+        annotated_rows.append(annotated)
+
+    selected_role = None
+    if preferred_role in tagged_roles:
+        selected_role = preferred_role
+    elif "bettor" in tagged_roles:
+        selected_role = "bettor"
+    elif "collector" in tagged_roles:
+        selected_role = "collector"
+
+    if selected_role is None:
+        filtered_rows = annotated_rows[:limit]
+    else:
+        filtered_rows = [row for row in annotated_rows if row.get("runtime_role") == selected_role][:limit]
+
+    filtered_rows.reverse()
+    return filtered_rows, selected_role
+
+
 def _parse_round(row: dict[str, Any]) -> dict[str, Any]:
     """Преобразовать строку game_results в сериализованное представление раунда."""
 
@@ -198,43 +337,42 @@ def _parse_round(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _get_snapshot() -> dict[str, Any]:
-    """Вернуть live runtime snapshot или безопасные значения по умолчанию."""
+    """Вернуть наиболее подходящий runtime snapshot: bettor, затем collector, затем legacy live."""
 
-    row = _fetch_one(
-        "SELECT updated_at, payload FROM runtime_snapshot WHERE snapshot_key = %s",
-        ("live",),
+    rows = _fetch_all(
+        """
+        SELECT snapshot_key, updated_at, payload
+        FROM runtime_snapshot
+        ORDER BY updated_at DESC NULLS LAST, snapshot_key ASC
+        """
     )
-    if not row:
-        return {
-            "event_type": "boot",
-            "updated_at": None,
-            "bet_mode_enabled": False,
-            "dynamic_bet_mode": False,
-            "strategy_display_name": None,
-            "current_step": None,
-            "max_steps": None,
-            "consecutive_losses": 0,
-            "session_balance": 0.0,
-            "account_balance": None,
-            "total_profit": 0.0,
-            "total_bets_placed": 0,
-            "external_deposits_total": 0.0,
-            "external_withdrawals_total": 0.0,
-            "configured_outcome": None,
-            "configured_targets": [],
-            "current_outcome": None,
-            "current_specifier": None,
-            "configured_specifiers": [],
-            "configured_specifier_index": 0,
-            "specifier_rotation_enabled": False,
-            "multi_bet_enabled": False,
-            "last_round_result": None,
-            "last_set_status": None,
-            "last_set_error": None,
-        }
+    if not rows:
+        return _build_default_snapshot()
 
-    payload = row.get("payload") or {}
-    payload["updated_at"] = _iso(row.get("updated_at"))
+    ranked_rows = []
+    for index, row in enumerate(rows):
+        payload = row.get("payload") or {}
+        snapshot_key = row.get("snapshot_key")
+        runtime_role = _extract_runtime_role(payload, snapshot_key)
+        ranked_rows.append((
+            _snapshot_updated_at_sort_value(row.get("updated_at")),
+            -_snapshot_priority(snapshot_key, runtime_role),
+            index,
+            row,
+            runtime_role,
+        ))
+
+    _, _, _, selected_row, runtime_role = sorted(
+        ranked_rows,
+        key=lambda item: (item[0], item[1], item[2]),
+        reverse=True,
+    )[0]
+
+    payload = _build_default_snapshot()
+    payload.update(selected_row.get("payload") or {})
+    payload["updated_at"] = _iso(selected_row.get("updated_at"))
+    payload["snapshot_key"] = selected_row.get("snapshot_key")
+    payload["runtime_role"] = runtime_role
     return payload
 
 
@@ -372,30 +510,21 @@ def _get_recent_rounds(limit: int = 20) -> list[dict[str, Any]]:
     return [_parse_round(row) for row in rows]
 
 
-def _get_balance_series(limit: int = 160) -> list[dict[str, Any]]:
-    """Построить временной ряд session balance и account balance из runtime_events."""
+def _get_balance_series(limit: int = 160, preferred_role: str | None = None) -> list[dict[str, Any]]:
+    """Построить временной ряд balance по согласованному потоку runtime events."""
 
-    rows = _fetch_all(
-        """
-        SELECT timestamp, event_type,
-               payload->>'session_balance' AS session_balance,
-               payload->>'account_balance' AS account_balance
-        FROM runtime_events
-        ORDER BY id DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
-    rows.reverse()
+    rows, selected_role = _select_runtime_event_rows(limit=limit, preferred_role=preferred_role)
     result = []
     for row in rows:
-        session_balance = row.get("session_balance")
-        account_balance = row.get("account_balance")
+        payload = row.get("payload") or {}
+        session_balance = payload.get("session_balance")
+        account_balance = payload.get("account_balance")
         result.append({
             "timestamp": _iso(row.get("timestamp")),
             "event_type": row.get("event_type"),
             "session_balance": float(session_balance) if session_balance not in (None, "") else None,
             "account_balance": float(account_balance) if account_balance not in (None, "") else None,
+            "runtime_role": row.get("runtime_role") or selected_role,
         })
     return result
 
@@ -447,18 +576,10 @@ def _get_result_curve(limit: int = 160) -> list[dict[str, Any]]:
     return curve
 
 
-def _get_recent_events(limit: int = 20) -> list[dict[str, Any]]:
-    """Вернуть последние runtime events в упрощенном виде для панели наблюдения."""
+def _get_recent_events(limit: int = 20, preferred_role: str | None = None) -> list[dict[str, Any]]:
+    """Вернуть последние runtime events без смешивания потоков collector и bettor."""
 
-    rows = _fetch_all(
-        """
-        SELECT timestamp, event_type, payload
-        FROM runtime_events
-        ORDER BY id DESC
-        LIMIT %s
-        """,
-        (limit,),
-    )
+    rows, selected_role = _select_runtime_event_rows(limit=limit, preferred_role=preferred_role)
     events = []
     for row in rows:
         payload = row.get("payload") or {}
@@ -469,6 +590,7 @@ def _get_recent_events(limit: int = 20) -> list[dict[str, Any]]:
             "account_balance": payload.get("account_balance"),
             "last_set_status": payload.get("last_set_status"),
             "last_round_result": payload.get("last_round_result"),
+            "runtime_role": row.get("runtime_role") or selected_role,
         })
     return events
 
@@ -477,12 +599,13 @@ def _build_overview() -> dict[str, Any]:
     """Собрать полный overview payload для dashboard API."""
 
     snapshot = _get_snapshot()
+    preferred_role = snapshot.get("runtime_role")
     latest_win = _get_latest_win()
     recent_bets = _get_recent_bets()
     recent_rounds = _get_recent_rounds()
-    balance_series = _get_balance_series()
+    balance_series = _get_balance_series(preferred_role=preferred_role)
     result_curve = _get_result_curve()
-    recent_events = _get_recent_events()
+    recent_events = _get_recent_events(preferred_role=preferred_role)
     latest_bet = recent_bets[0] if recent_bets else None
     latest_round = recent_rounds[0] if recent_rounds else None
 

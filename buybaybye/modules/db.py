@@ -25,6 +25,7 @@ def get_db_connection(*, database_config: DatabaseConfig):
         """
         CREATE TABLE IF NOT EXISTS game_results (
             id SERIAL PRIMARY KEY,
+            game_id TEXT,
             timestamp TIMESTAMP WITH TIME ZONE,
             player_name TEXT,
             dice_results JSONB,
@@ -32,6 +33,8 @@ def get_db_connection(*, database_config: DatabaseConfig):
         )
         """
     )
+    cursor.execute("""ALTER TABLE game_results ADD COLUMN IF NOT EXISTS game_id TEXT""")
+    cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_game_results_game_id ON game_results(game_id)""")
     cursor.execute("""CREATE INDEX IF NOT EXISTS idx_timestamp ON game_results(timestamp)""")
     cursor.execute("""CREATE INDEX IF NOT EXISTS idx_player ON game_results(player_name)""")
 
@@ -102,15 +105,20 @@ def save_target_ws_message(*, payload_text: str, get_db_connection_func) -> None
         conn = get_db_connection_func()
         cursor = conn.cursor()
 
+        game_id_value = parsed_payload.get("game_id")
+        game_id = str(game_id_value).strip() if game_id_value is not None else None
+        if game_id == "":
+            game_id = None
         player_name = results.get("player", {}).get("name", "unknown")
         timestamp = datetime.now(timezone.utc)
 
         cursor.execute(
             """
-            INSERT INTO game_results (timestamp, player_name, dice_results)
-            VALUES (%s, %s, %s)
+            INSERT INTO game_results (game_id, timestamp, player_name, dice_results)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (game_id) DO NOTHING
             """,
-            (timestamp, player_name, Json(results)),
+            (game_id, timestamp, player_name, Json(results)),
         )
 
         conn.commit()
