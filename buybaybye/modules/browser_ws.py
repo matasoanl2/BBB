@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 import asyncio
 
@@ -25,6 +26,29 @@ def wire_ws_logging(
     betting_state = runtime_context.betting_state
     browser_config = runtime_config.browser
     ws_log_enabled = runtime_config.logging.ws_log_enabled
+
+    def _build_target_snapshot_extra(payload) -> dict | None:
+        payload_text = format_ws_payload_func(payload)
+        try:
+            parsed_payload = json.loads(payload_text)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+        if not isinstance(parsed_payload, dict) or parsed_payload.get("status") != "rng_values":
+            return None
+
+        results = parsed_payload.get("results")
+        if not isinstance(results, dict):
+            return None
+
+        player_info = results.get("player") if isinstance(results.get("player"), dict) else {}
+        return {
+            "last_round_game_id": parsed_payload.get("game_id"),
+            "last_round_status": parsed_payload.get("status"),
+            "last_round_timestamp": datetime.now(timezone.utc).isoformat(),
+            "last_round_player_name": player_info.get("name"),
+            "last_round_position": player_info.get("position"),
+        }
 
     def on_websocket(ws) -> None:
         """Обработать открытие нового websocket и привязать события фреймов."""
@@ -57,6 +81,9 @@ def wire_ws_logging(
             if is_target:
                 if runtime_config.role.writes_round_results:
                     save_target_ws_message_func(payload)
+                    snapshot_extra = _build_target_snapshot_extra(payload)
+                    if snapshot_extra is not None:
+                        update_runtime_snapshot_func("collector_round_ingress", snapshot_extra)
                 if runtime_config.betting.enabled:
                     asyncio.create_task(process_betting_round_func(page, payload))
 

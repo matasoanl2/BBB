@@ -105,10 +105,8 @@ def update_runtime_snapshot(*, get_db_connection_func, snapshot: dict, event_typ
         updated_at = datetime.now(timezone.utc)
         snapshot_key = "live"
         role_name = str(snapshot.get("runtime_role") or "default")
-        snapshot_keys = [snapshot_key]
         role_snapshot_key = f"live:{role_name}"
-        if role_snapshot_key not in snapshot_keys:
-            snapshot_keys.append(role_snapshot_key)
+        snapshot_keys = [snapshot_key, role_snapshot_key]
 
         for key in snapshot_keys:
             cursor.execute(

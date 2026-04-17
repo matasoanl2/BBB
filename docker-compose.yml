@@ -31,7 +31,7 @@ services:
       DB_HOST: postgres
       HEADLESS: "true"
       RUNTIME_ROLE: collector
-      BET_MODE: "false"
+
     volumes:
       - ./strategies:/app/strategies:ro
     shm_size: "1gb"

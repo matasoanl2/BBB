@@ -241,7 +241,7 @@ def _snapshot_updated_at_sort_value(value: Any) -> datetime:
 
     if isinstance(value, datetime):
         return value
-    return datetime.min.replace(tzinfo=timezone.utc)
+    return datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
 def _select_runtime_event_rows(limit: int, preferred_role: str | None = None) -> tuple[list[dict[str, Any]], str | None]:

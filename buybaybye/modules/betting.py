@@ -438,6 +438,7 @@ async def place_bets(
             should_refresh_token = is_forbidden_access_error_func(status_code, response_text)
 
             snapshot_event_type = "bet_set"
+            should_update_snapshot = True
             if status_code == 200:
                 previous_total_bets = betting_state.get("total_bets_placed", 0)
                 current_round_number = next_round_number
@@ -583,6 +584,8 @@ async def place_bets(
                     print(log_line, flush=True)
                     if pause_changed:
                         print("[SET-PAUSE] API вернул недостаточно средств, шаг стратегии не сдвигаем.", flush=True)
+                    else:
+                        should_update_snapshot = False
                 else:
                     roi = calculate_roi_func()
                     log_line = format_bet_log_func(
@@ -638,7 +641,8 @@ async def place_bets(
             conn.commit()
             cursor.close()
             conn.close()
-            update_runtime_snapshot_func(snapshot_event_type, snapshot_extra)
+            if should_update_snapshot:
+                update_runtime_snapshot_func(snapshot_event_type, snapshot_extra)
         except Exception as exc:
             betting_state["pending_bets"] = []
             betting_state["last_bet_amount"] = 0.0

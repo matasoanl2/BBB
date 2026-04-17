@@ -106,9 +106,7 @@ def save_target_ws_message(*, payload_text: str, get_db_connection_func) -> None
         cursor = conn.cursor()
 
         game_id_value = parsed_payload.get("game_id")
-        game_id = str(game_id_value).strip() if game_id_value is not None else None
-        if game_id == "":
-            game_id = None
+        game_id = str(game_id_value).strip() or None if game_id_value is not None else None
         player_name = results.get("player", {}).get("name", "unknown")
         timestamp = datetime.now(timezone.utc)
 
