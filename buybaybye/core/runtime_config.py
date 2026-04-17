@@ -109,6 +109,7 @@ class DynamicBettingConfig:
     enabled: bool
     window_size: int
     recalc_interval: int
+    unchanged_analysis_output_enabled: bool
     use_average_value_selection: bool
     include_double_selection: bool
     filter_by_player: bool
@@ -230,6 +231,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             enabled=_env_bool("DYNAMIC_BET_MODE"),
             window_size=int(os.getenv("DYNAMIC_WINDOW_SIZE", "40")),
             recalc_interval=int(os.getenv("DYNAMIC_RECALC_INTERVAL", "5")),
+            unchanged_analysis_output_enabled=_env_bool("DYNAMIC_UNCHANGED_ANALYSIS_OUTPUT_ENABLED", "true"),
             use_average_value_selection=_env_bool("DYNAMIC_USE_AVERAGE_VALUE_SELECTION", "true"),
             include_double_selection=_env_bool("DYNAMIC_INCLUDE_DOUBLE_SELECTION", "true"),
             filter_by_player=_env_bool("DYNAMIC_FILTER_BY_PLAYER"),

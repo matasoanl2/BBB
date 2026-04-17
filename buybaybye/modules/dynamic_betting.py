@@ -295,6 +295,9 @@ def update_dynamic_bet(
     if bet_debug_enabled:
         print(f"[DEBUG DYNAMIC] Ставка не изменилась: {current_outcome if current_outcome == 'double' else f'{current_outcome}({current_specifier})'} оптимальна", flush=True)
 
+    if not dynamic_config.unchanged_analysis_output_enabled:
+        return current_outcome, current_specifier
+
     print(f"\n{color_cyan}📊 АНАЛИЗ ДИНАМИЧЕСКОЙ СТАВКИ (ход {total_bets}):{color_reset}", flush=True)
     sorted_stats = sorted(stats.items(), key=lambda item: item[1]["frequency"], reverse=True)
     for index, (combo, data) in enumerate(sorted_stats[:5], 1):
