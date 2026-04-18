@@ -356,9 +356,10 @@
             font-weight: 700;
         }
 
-        .status-pending, .status-win { background: var(--green-soft); color: var(--green); }
-        .status-loss, .status-error { background: var(--red-soft); color: var(--red); }
-        .status-skipped_insufficient_balance { background: var(--amber-soft); color: var(--amber); }
+        .status-tone-success { background: var(--green-soft); color: var(--green); }
+        .status-tone-danger { background: var(--red-soft); color: var(--red); }
+        .status-tone-warning { background: var(--amber-soft); color: var(--amber); }
+        .status-tone-neutral { background: var(--blue-soft); color: var(--blue); }
 
         .mono {
             font-family: "Consolas", "Lucida Console", monospace;
@@ -924,7 +925,44 @@
             return date.toLocaleTimeString("ru-RU");
         };
 
-        const statusClass = (status) => `status-pill status-${String(status || "").replace(/[^a-z_]/gi, "_").toLowerCase()}`;
+        const STATUS_TONE_MAP = {
+            pending: "success",
+            win: "success",
+            loss: "danger",
+            error: "danger",
+            paused_low_balance: "warning",
+            precheck_error: "danger",
+            forbidden_refresh: "danger",
+            retry_after_refresh: "warning",
+            db_error: "danger",
+            request_error: "danger",
+            skipped_insufficient_balance: "warning",
+            skipped_low_balance: "warning",
+            skipped_precheck: "warning",
+            skipped_request_error: "warning",
+            paused: "warning",
+        };
+
+        function statusClass(status) {
+            const normalized = String(status || "").replace(/[^a-z_]/gi, "_").toLowerCase();
+            let tone = STATUS_TONE_MAP[normalized];
+
+            if (!tone) {
+                if (normalized.startsWith("skipped_") || normalized.startsWith("paused_") || normalized.startsWith("retry_")) {
+                    tone = "warning";
+                } else if (normalized.includes("error") || normalized.startsWith("forbidden")) {
+                    tone = "danger";
+                } else if (normalized === "pending" || normalized === "win") {
+                    tone = "success";
+                } else if (normalized === "loss") {
+                    tone = "danger";
+                } else {
+                    tone = "neutral";
+                }
+            }
+
+            return `status-pill status-${normalized} status-tone-${tone}`;
+        }
 
         function renderWinConfetti() {
             const layer = document.getElementById("winConfetti");
@@ -955,9 +993,12 @@
             // Формируем строку с результатами кубиков
             const red = ("red_value" in bet) ? bet.red_value : undefined;
             const yellow = ("yellow_value" in bet) ? bet.yellow_value : undefined;
+            const hasKnownDie = (red !== undefined && red !== null && red !== "") || (yellow !== undefined && yellow !== null && yellow !== "");
             const redStr = (red !== undefined && red !== null && red !== "") ? red : "-";
             const yellowStr = (yellow !== undefined && yellow !== null && yellow !== "") ? yellow : "-";
-            const diceResult = `Красный: ${redStr}, Жёлтый: ${yellowStr}`;
+            const diceResult = hasKnownDie
+                ? `Красный: ${redStr}, Жёлтый: ${yellowStr}`
+                : `Результат: ${bet.result || "-"}`;
             setText("winOverlayResult", diceResult);
 
             renderWinConfetti();
@@ -1125,21 +1166,16 @@
                 return;
             }
 
-            body.innerHTML = rounds.map((round) => {
-                // Цветовые подписи для значений
-                const red = `<span style="color:#b64432;font-weight:600">RED: ${round.red_value ?? '-'}</span>`;
-                const yellow = `<span style="color:#bb7a22;font-weight:600">YELLOW: ${round.yellow_value ?? '-'}</span>`;
-                return `
-                    <tr>
-                        <td class="mono">${fmtShortTime(round.timestamp)}</td>
-                        <td>${escapeHtml(round.player_name || "unknown")}</td>
-                        <td>${escapeHtml(round.position || "-")}</td>
-                        <td>${round.red_value ?? "-"}</td>
-                        <td>${round.yellow_value ?? "-"}</td>
-                        <td>${red}, ${yellow}</td>
-                    </tr>
-                `;
-            }).join("");
+            body.innerHTML = rounds.map((round) => `
+                <tr>
+                    <td class="mono">${fmtShortTime(round.timestamp)}</td>
+                    <td>${escapeHtml(round.player_name || "unknown")}</td>
+                    <td>${escapeHtml(round.position || "-")}</td>
+                    <td>${round.red_value ?? "-"}</td>
+                    <td>${round.yellow_value ?? "-"}</td>
+                    <td>${escapeHtml(round.display || "-")}</td>
+                </tr>
+            `).join("");
         }
 
         function renderEvents(events) {

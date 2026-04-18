@@ -22,6 +22,23 @@ BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
+def _env_flag_enabled(name: str, default: bool = False) -> bool:
+    """Parse a boolean env flag with a safe false-by-default fallback."""
+
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_dashboard_template_name() -> str:
+    """Choose the dashboard HTML template based on the dashboard version flag."""
+
+    if _env_flag_enabled("DASHBOARD_V2_ENABLED", default=False):
+        return "index_v2.html"
+    return "index.html"
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Prepare dashboard schema on startup."""
@@ -161,6 +178,21 @@ def _format_target(outcome: str | None, specifier: str | None) -> str:
     if specifier:
         return f"{outcome.upper()} {specifier}"
     return outcome.upper()
+
+
+def _derive_safe_result_dice_values(result_dice_color: Any, result_dice_value: Any) -> tuple[int | None, int | None]:
+    """Безопасно восстановить значения кубиков из сохраненного результата ставки."""
+
+    if not isinstance(result_dice_value, int):
+        return None, None
+
+    if result_dice_color == "double":
+        return result_dice_value, result_dice_value
+    if result_dice_color == "red":
+        return result_dice_value, None
+    if result_dice_color == "yellow":
+        return None, result_dice_value
+    return None, None
 
 
 def _normalize_runtime_role(value: Any) -> str | None:
@@ -431,21 +463,11 @@ def _get_latest_win(conn=None) -> dict[str, Any] | None:
 
     row = _fetch_one(
         """
-        SELECT bh.id, bh.timestamp, bh.outcome, bh.specifier, bh.amount, bh.strategy, 
-               bh.bet_step, bh.status, bh.result_dice_color, bh.result_dice_value, 
-               gr.red_value, gr.yellow_value
-        FROM bet_history bh
-        LEFT JOIN LATERAL (
-            SELECT gr.id, gr.timestamp, 
-                   (gr.dice_results->'dice')::jsonb->0->>'value' AS red_value,
-                   (gr.dice_results->'dice')::jsonb->1->>'value' AS yellow_value
-            FROM game_results gr
-            WHERE gr.timestamp >= bh.timestamp
-            ORDER BY gr.timestamp ASC
-            LIMIT 1
-        ) gr ON TRUE
-        WHERE bh.status = 'win'
-        ORDER BY bh.id DESC
+        SELECT id, timestamp, outcome, specifier, amount, strategy,
+               bet_step, status, result_dice_color, result_dice_value
+        FROM bet_history
+         WHERE status = 'win'
+        ORDER BY id DESC
         LIMIT 1
         """,
         conn=conn,
@@ -453,6 +475,11 @@ def _get_latest_win(conn=None) -> dict[str, Any] | None:
 
     if not row:
         return None
+
+    red_value, yellow_value = _derive_safe_result_dice_values(
+        row.get("result_dice_color"),
+        row.get("result_dice_value"),
+    )
 
     return {
         "id": row.get("id"),
@@ -463,8 +490,8 @@ def _get_latest_win(conn=None) -> dict[str, Any] | None:
         "step": (row.get("bet_step") + 1) if isinstance(row.get("bet_step"), int) else None,
         "status": row.get("status"),
         "result": _format_target(row.get("result_dice_color"), row.get("result_dice_value")),
-        "red_value": row.get("red_value"),
-        "yellow_value": row.get("yellow_value"),
+        "red_value": red_value,
+        "yellow_value": yellow_value,
     }
 
 
@@ -621,7 +648,7 @@ def index(request: Request):
 
     return templates.TemplateResponse(
         request,
-        "index.html",
+        _get_dashboard_template_name(),
         {
             "request": request,
             "title": "BuyBayBye Dashboard",
