@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -13,11 +14,23 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from psycopg2.extras import RealDictCursor
 
+from buybaybye.core.runtime_config import DatabaseConfig
+from buybaybye.modules.db import ensure_runtime_schema
+
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
-app = FastAPI(title="BuyBayBye Dashboard")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    """Prepare dashboard schema on startup."""
+
+    _ensure_dashboard_schema()
+    yield
+
+
+app = FastAPI(title="BuyBayBye Dashboard", lifespan=lifespan)
 
 
 DEFAULT_SNAPSHOT = {
@@ -85,72 +98,22 @@ def _get_db_connection():
 def _ensure_dashboard_schema() -> None:
     """Гарантировать наличие таблиц, которые читает и заполняет dashboard."""
 
-    conn = _get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS game_results (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMP WITH TIME ZONE,
-            player_name TEXT,
-            dice_results JSONB,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    ensure_runtime_schema(
+        database_config=DatabaseConfig(
+            user=os.getenv("DB_USER", "postgres"),
+            password=os.getenv("DB_PASSWORD", "postgres"),
+            host=os.getenv("DB_HOST", "localhost"),
+            port=os.getenv("DB_PORT", "5432"),
+            name=os.getenv("DB_NAME", "buybaybye"),
         )
-        """
     )
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS bet_history (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMP WITH TIME ZONE,
-            outcome TEXT,
-            specifier TEXT,
-            amount FLOAT,
-            strategy TEXT,
-            bet_step INTEGER,
-            status TEXT,
-            result_dice_color TEXT,
-            result_dice_value INTEGER,
-
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        )
-        """
-    )
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS runtime_snapshot (
-            snapshot_key TEXT PRIMARY KEY,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            payload JSONB NOT NULL
-        )
-        """
-    )
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS runtime_events (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            event_type TEXT,
-            payload JSONB NOT NULL
-        )
-        """
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
 
 
-@app.on_event("startup")
-def _startup() -> None:
-    """Подготовить dashboard schema при старте FastAPI-приложения."""
-
-    _ensure_dashboard_schema()
-
-
-def _fetch_one(query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
+def _fetch_one(query: str, params: tuple[Any, ...] = (), conn=None) -> dict[str, Any] | None:
     """Выполнить SQL-запрос и вернуть одну строку в виде словаря."""
 
-    conn = _get_db_connection()
+    own_connection = conn is None
+    conn = conn or _get_db_connection()
     cursor = conn.cursor()
     if params:
         cursor.execute(query, params)
@@ -158,14 +121,16 @@ def _fetch_one(query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | Non
         cursor.execute(query)
     row = cursor.fetchone()
     cursor.close()
-    conn.close()
+    if own_connection:
+        conn.close()
     return dict(row) if row else None
 
 
-def _fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+def _fetch_all(query: str, params: tuple[Any, ...] = (), conn=None) -> list[dict[str, Any]]:
     """Выполнить SQL-запрос и вернуть все строки как список словарей."""
 
-    conn = _get_db_connection()
+    own_connection = conn is None
+    conn = conn or _get_db_connection()
     cursor = conn.cursor()
     if params:
         cursor.execute(query, params)
@@ -173,7 +138,8 @@ def _fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]
         cursor.execute(query)
     rows = [dict(row) for row in cursor.fetchall()]
     cursor.close()
-    conn.close()
+    if own_connection:
+        conn.close()
     return rows
 
 
@@ -244,7 +210,7 @@ def _snapshot_updated_at_sort_value(value: Any) -> datetime:
     return datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
-def _select_runtime_event_rows(limit: int, preferred_role: str | None = None) -> tuple[list[dict[str, Any]], str | None]:
+def _select_runtime_event_rows(limit: int, preferred_role: str | None = None, conn=None) -> tuple[list[dict[str, Any]], str | None]:
     """Выбрать согласованный поток runtime events без смешивания bettor и collector."""
 
     fetch_limit = max(limit * 6, limit)
@@ -256,6 +222,7 @@ def _select_runtime_event_rows(limit: int, preferred_role: str | None = None) ->
         LIMIT %s
         """,
         (fetch_limit,),
+        conn=conn,
     )
 
     annotated_rows = []
@@ -336,7 +303,7 @@ def _parse_round(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _get_snapshot() -> dict[str, Any]:
+def _get_snapshot(conn=None) -> dict[str, Any]:
     """Вернуть наиболее подходящий runtime snapshot: bettor, затем collector, затем legacy live."""
 
     rows = _fetch_all(
@@ -344,7 +311,8 @@ def _get_snapshot() -> dict[str, Any]:
         SELECT snapshot_key, updated_at, payload
         FROM runtime_snapshot
         ORDER BY updated_at DESC NULLS LAST, snapshot_key ASC
-        """
+        """,
+        conn=conn,
     )
     if not rows:
         return _build_default_snapshot()
@@ -376,7 +344,7 @@ def _get_snapshot() -> dict[str, Any]:
     return payload
 
 
-def _get_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
+def _get_summary(snapshot: dict[str, Any], conn=None) -> dict[str, Any]:
     """Собрать сводные метрики dashboard из snapshot и агрегатов bet_history."""
 
     bets = _fetch_one(
@@ -387,10 +355,11 @@ def _get_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
             COUNT(*) FILTER (WHERE status = 'loss')::int AS losses,
             COUNT(*) FILTER (WHERE status LIKE 'skipped%')::int AS skipped
         FROM bet_history
-        """
+        """,
+        conn=conn,
     ) or {"total_bets": 0, "wins": 0, "losses": 0, "skipped": 0}
 
-    rounds = _fetch_one("SELECT COUNT(*)::int AS total_rounds FROM game_results") or {"total_rounds": 0}
+    rounds = _fetch_one("SELECT COUNT(*)::int AS total_rounds FROM game_results", conn=conn) or {"total_rounds": 0}
     win_rate = 0.0
     resolved = bets["wins"] + bets["losses"]
     if resolved > 0:
@@ -423,10 +392,12 @@ def _get_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "losses": bets["losses"],
         "skipped": bets["skipped"],
         "win_rate": win_rate,
+        "freshness_state": snapshot.get("freshness_state") or ("stale" if snapshot.get("account_balance_is_stale") else "fresh"),
+        "reconciliation_phase": snapshot.get("reconciliation_phase") or "idle",
     }
 
 
-def _get_recent_bets(limit: int = 20) -> list[dict[str, Any]]:
+def _get_recent_bets(limit: int = 20, conn=None) -> list[dict[str, Any]]:
     """Загрузить последние ставки и подготовить их к отображению в dashboard."""
 
     rows = _fetch_all(
@@ -438,6 +409,7 @@ def _get_recent_bets(limit: int = 20) -> list[dict[str, Any]]:
         LIMIT %s
         """,
         (limit,),
+        conn=conn,
     )
     result = []
     for row in rows:
@@ -454,7 +426,7 @@ def _get_recent_bets(limit: int = 20) -> list[dict[str, Any]]:
     return result
 
 
-def _get_latest_win() -> dict[str, Any] | None:
+def _get_latest_win(conn=None) -> dict[str, Any] | None:
     """Вернуть самую свежую выигранную ставку для клиентской win-анимации."""
 
     row = _fetch_one(
@@ -475,7 +447,8 @@ def _get_latest_win() -> dict[str, Any] | None:
         WHERE bh.status = 'win'
         ORDER BY bh.id DESC
         LIMIT 1
-        """
+        """,
+        conn=conn,
     )
 
     if not row:
@@ -495,7 +468,7 @@ def _get_latest_win() -> dict[str, Any] | None:
     }
 
 
-def _get_recent_rounds(limit: int = 20) -> list[dict[str, Any]]:
+def _get_recent_rounds(limit: int = 20, conn=None) -> list[dict[str, Any]]:
     """Загрузить последние игровые раунды и преобразовать их в UI-формат."""
 
     rows = _fetch_all(
@@ -506,14 +479,15 @@ def _get_recent_rounds(limit: int = 20) -> list[dict[str, Any]]:
         LIMIT %s
         """,
         (limit,),
+        conn=conn,
     )
     return [_parse_round(row) for row in rows]
 
 
-def _get_balance_series(limit: int = 160, preferred_role: str | None = None) -> list[dict[str, Any]]:
+def _get_balance_series(limit: int = 160, preferred_role: str | None = None, conn=None) -> list[dict[str, Any]]:
     """Построить временной ряд balance по согласованному потоку runtime events."""
 
-    rows, selected_role = _select_runtime_event_rows(limit=limit, preferred_role=preferred_role)
+    rows, selected_role = _select_runtime_event_rows(limit=limit, preferred_role=preferred_role, conn=conn)
     result = []
     for row in rows:
         payload = row.get("payload") or {}
@@ -529,7 +503,7 @@ def _get_balance_series(limit: int = 160, preferred_role: str | None = None) -> 
     return result
 
 
-def _get_result_curve(limit: int = 160) -> list[dict[str, Any]]:
+def _get_result_curve(limit: int = 160, conn=None) -> list[dict[str, Any]]:
     """Построить кривую wins/losses и rolling win-rate по истории resolved ставок."""
 
     rows = _fetch_all(
@@ -541,6 +515,7 @@ def _get_result_curve(limit: int = 160) -> list[dict[str, Any]]:
         LIMIT %s
         """,
         (limit,),
+        conn=conn,
     )
     rows.reverse()
 
@@ -576,10 +551,10 @@ def _get_result_curve(limit: int = 160) -> list[dict[str, Any]]:
     return curve
 
 
-def _get_recent_events(limit: int = 20, preferred_role: str | None = None) -> list[dict[str, Any]]:
+def _get_recent_events(limit: int = 20, preferred_role: str | None = None, conn=None) -> list[dict[str, Any]]:
     """Вернуть последние runtime events без смешивания потоков collector и bettor."""
 
-    rows, selected_role = _select_runtime_event_rows(limit=limit, preferred_role=preferred_role)
+    rows, selected_role = _select_runtime_event_rows(limit=limit, preferred_role=preferred_role, conn=conn)
     events = []
     for row in rows:
         payload = row.get("payload") or {}
@@ -595,32 +570,49 @@ def _get_recent_events(limit: int = 20, preferred_role: str | None = None) -> li
     return events
 
 
-def _build_overview() -> dict[str, Any]:
-    """Собрать полный overview payload для dashboard API."""
+def _build_status_payload() -> dict[str, Any]:
+    conn = _get_db_connection()
+    try:
+        snapshot = _get_snapshot(conn=conn)
+        return {
+            "snapshot": snapshot,
+            "summary": _get_summary(snapshot, conn=conn),
+            "latest_win": _get_latest_win(conn=conn),
+        }
+    finally:
+        conn.close()
 
-    snapshot = _get_snapshot()
-    preferred_role = snapshot.get("runtime_role")
-    latest_win = _get_latest_win()
-    recent_bets = _get_recent_bets()
-    recent_rounds = _get_recent_rounds()
-    balance_series = _get_balance_series(preferred_role=preferred_role)
-    result_curve = _get_result_curve()
-    recent_events = _get_recent_events(preferred_role=preferred_role)
-    latest_bet = recent_bets[0] if recent_bets else None
-    latest_round = recent_rounds[0] if recent_rounds else None
 
-    return {
-        "snapshot": snapshot,
-        "summary": _get_summary(snapshot),
-        "latest_win": latest_win,
-        "latest_bet": latest_bet,
-        "latest_round": latest_round,
-        "recent_bets": recent_bets,
-        "recent_rounds": recent_rounds,
-        "balance_series": balance_series,
-        "result_curve": result_curve,
-        "recent_events": recent_events,
-    }
+def _build_history_payload() -> dict[str, Any]:
+    conn = _get_db_connection()
+    try:
+        snapshot = _get_snapshot(conn=conn)
+        preferred_role = snapshot.get("runtime_role")
+        recent_bets = _get_recent_bets(conn=conn)
+        recent_rounds = _get_recent_rounds(conn=conn)
+        recent_events = _get_recent_events(preferred_role=preferred_role, conn=conn)
+        return {
+            "recent_bets": recent_bets,
+            "recent_rounds": recent_rounds,
+            "recent_events": recent_events,
+            "latest_bet": recent_bets[0] if recent_bets else None,
+            "latest_round": recent_rounds[0] if recent_rounds else None,
+        }
+    finally:
+        conn.close()
+
+
+def _build_chart_payload() -> dict[str, Any]:
+    conn = _get_db_connection()
+    try:
+        snapshot = _get_snapshot(conn=conn)
+        preferred_role = snapshot.get("runtime_role")
+        return {
+            "balance_series": _get_balance_series(preferred_role=preferred_role, conn=conn),
+            "result_curve": _get_result_curve(conn=conn),
+        }
+    finally:
+        conn.close()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -645,8 +637,22 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/overview")
-def api_overview() -> dict[str, Any]:
-    """Вернуть агрегированный overview payload для фронтенда dashboard."""
+@app.get("/api/status")
+def api_status() -> dict[str, Any]:
+    """Return cheap live status payload for operator UI."""
 
-    return _build_overview()
+    return _build_status_payload()
+
+
+@app.get("/api/history")
+def api_history() -> dict[str, Any]:
+    """Return recent bets, rounds, and events without charts."""
+
+    return _build_history_payload()
+
+
+@app.get("/api/charts")
+def api_charts() -> dict[str, Any]:
+    """Return chart payloads separately from live status."""
+
+    return _build_chart_payload()

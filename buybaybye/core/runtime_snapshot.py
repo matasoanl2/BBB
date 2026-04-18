@@ -58,6 +58,10 @@ def build_runtime_snapshot(
         "total_bet_amount": betting_state.get("total_bet_amount") if betting_state else 0.0,
         "total_bets_placed": betting_state.get("total_bets_placed") if betting_state else 0,
         "pending_expected_bet_drop": betting_state.get("pending_expected_bet_drop") if betting_state else 0.0,
+        "pending_expected_settlement_credit": betting_state.get("pending_expected_settlement_credit") if betting_state else 0.0,
+        "reconciliation_phase": betting_state.get("reconciliation_phase") if betting_state else "idle",
+        "last_external_balance_change_type": betting_state.get("last_external_balance_change_type") if betting_state else None,
+        "last_external_balance_change_amount": betting_state.get("last_external_balance_change_amount") if betting_state else 0.0,
         "pending_bets_count": len(betting_state.get("pending_bets", [])) if betting_state else 0,
         "low_balance_pause_active": betting_state.get("low_balance_pause_active") if betting_state else False,
         "low_balance_pause_required_balance": betting_state.get("low_balance_pause_required_balance") if betting_state else 0.0,
@@ -89,6 +93,7 @@ def build_runtime_snapshot(
         "last_round_timestamp": betting_state.get("last_round_timestamp") if betting_state else None,
         "last_round_player_name": betting_state.get("last_round_player_name") if betting_state else None,
         "last_round_position": betting_state.get("last_round_position") if betting_state else None,
+        "freshness_state": "stale" if (is_account_balance_stale_func() if betting_state else False) else "fresh",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     if extra:

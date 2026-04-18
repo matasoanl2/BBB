@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from buybaybye.modules.betting import place_bet as _betting_place_bet
 from buybaybye.modules.betting import place_bets as _betting_place_bets
 from buybaybye.modules.betting import process_betting_round as _betting_process_betting_round
@@ -105,6 +107,11 @@ class RuntimeServices:
 
         return self.infrastructure.get_db_connection()
 
+    def ensure_runtime_schema(self) -> None:
+        """Initialize runtime schema before live processing starts."""
+
+        self.infrastructure.ensure_runtime_schema()
+
     def format_ws_payload(self, payload: object) -> str:
         """Преобразовать websocket payload в строку для логов и сохранения."""
 
@@ -190,7 +197,32 @@ class RuntimeServices:
             update_runtime_snapshot_func=self.update_runtime_snapshot,
             update_balance_from_accounting_payload_func=self.update_balance_from_accounting_payload,
             process_betting_round_func=self.process_betting_round,
+            schedule_background_task_func=self.schedule_background_task,
         )
+
+    def schedule_background_task(self, coroutine, *, description: str):
+        """Create a supervised background task and surface failures in runtime events."""
+
+        task = asyncio.create_task(coroutine)
+        self.runtime_context.register_background_task(task)
+
+        def _handle_completion(completed_task) -> None:
+            if completed_task.cancelled():
+                return
+            exc = completed_task.exception()
+            if exc is None:
+                return
+            print(f"[ASYNC ERROR] {description}: {exc}", flush=True)
+            self.update_runtime_snapshot(
+                "background_task_error",
+                {
+                    "background_task": description,
+                    "background_task_error": str(exc)[:300],
+                },
+            )
+
+        task.add_done_callback(_handle_completion)
+        return task
 
     async def monitor_accounting_ws_health(self, page) -> None:
         """Запустить мониторинг accounting websocket и stale-balance условий."""

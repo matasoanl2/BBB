@@ -135,7 +135,13 @@ class BettingRuntimeService:
         return _dynamic_analyze_all_results_frequency(
             runtime_context=self.runtime_context,
             runtime_config=self.runtime_config,
+            get_db_connection_func=self._get_db_connection,
         )
+
+    def _get_db_connection(self):
+        from buybaybye.modules.db import get_db_connection
+
+        return get_db_connection(database_config=self.runtime_config.database)
 
     def get_best_combination(self, stats: dict | None = None) -> tuple[str, str]:
         """Выбрать лучшую комбинацию ставки для dynamic betting режима."""

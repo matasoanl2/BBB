@@ -146,6 +146,25 @@
             font-weight: 700;
         }
 
+        .status-alert {
+            padding: 12px 14px;
+            border-radius: 14px;
+            border: 1px solid var(--line);
+            font-size: 13px;
+            color: var(--ink);
+            background: rgba(255, 255, 255, 0.72);
+        }
+
+        .status-alert.error {
+            background: var(--red-soft);
+            color: var(--red);
+        }
+
+        .status-alert.warn {
+            background: var(--amber-soft);
+            color: var(--amber);
+        }
+
         .grid-cards {
             display: grid;
             grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -656,7 +675,7 @@
                     Одна панель для рантайм-состояния, балансов, последних ставок, выпавших раундов и событий сессии. Экран обновляется автоматически и читает только PostgreSQL + runtime snapshot.
                 </div>
                 <div class="hero-meta">
-                    <div class="chip">URL: <span class="mono">/api/overview</span></div>
+                    <div class="chip">URL: <span class="mono">/api/status</span> + <span class="mono">/api/history</span> + <span class="mono">/api/charts</span></div>
                     <div class="chip">Обновление: каждые 5 секунд</div>
                     <div class="chip">Источник: <span class="mono">runtime_snapshot</span> + history</div>
                 </div>
@@ -674,6 +693,11 @@
                     <label>Последнее обновление</label>
                     <div class="value mono" id="updatedAt">-</div>
                 </div>
+                <div class="status-box">
+                    <label>Свежесть данных</label>
+                    <div class="value" id="freshnessState">-</div>
+                </div>
+                <div class="status-alert" id="dashboardAlert">Нет активных предупреждений</div>
             </div>
         </section>
 
@@ -983,6 +1007,22 @@
             if (node) node.textContent = value;
         }
 
+        function escapeHtml(value) {
+            return String(value ?? "-")
+                .replaceAll("&", "&amp;")
+                .replaceAll("<", "&lt;")
+                .replaceAll(">", "&gt;")
+                .replaceAll('"', "&quot;")
+                .replaceAll("'", "&#39;");
+        }
+
+        function renderAlert(message, kind = "warn") {
+            const node = document.getElementById("dashboardAlert");
+            if (!node) return;
+            node.className = `status-alert ${kind}`.trim();
+            node.textContent = message;
+        }
+
         function formatTarget(snapshot) {
             const configuredTargets = Array.isArray(snapshot.configured_targets)
                 ? snapshot.configured_targets.filter((value) => value !== null && value !== undefined && `${value}`.trim() !== "")
@@ -1017,11 +1057,20 @@
             setText("strategyName", snapshot.strategy_display_name || "Нет активной стратегии");
             setText("currentTarget", formatTarget(snapshot));
             setText("updatedAt", fmtDateTime(snapshot.updated_at));
+            setText("freshnessState", summary.freshness_state === "stale" ? "Stale" : "Fresh");
             setText("sessionBalance", fmtMoney(summary.session_balance));
             setText("realBalance", fmtMoney(summary.account_balance));
             setText("stepLabel", summary.step_label || "-");
             setText("lossStreak", String(summary.consecutive_losses || 0));
             setText("withdrawalsTotal", fmtMoney(summary.withdrawals_total));
+
+            if (summary.freshness_state === "stale") {
+                renderAlert("Accounting balance устарел или поток данных деградировал", "warn");
+            } else if (snapshot.last_set_error) {
+                renderAlert(`Последняя ошибка SET: ${snapshot.last_set_error}`, "warn");
+            } else {
+                renderAlert("Нет активных предупреждений");
+            }
 
             const rail = document.getElementById("summaryRail");
             rail.innerHTML = "";
@@ -1031,6 +1080,8 @@
                 ["Всего раундов в БД", summary.all_time_rounds],
                 ["Победы / проигрыши", `${summary.wins} / ${summary.losses}`],
                 ["Win rate", fmtNumber(summary.win_rate)],
+                ["Freshness", summary.freshness_state || "fresh"],
+                ["Reconciliation", summary.reconciliation_phase || "idle"],
                 ["Последний round result", snapshot.last_round_result || "-"],
                 ["Последний SET status", snapshot.last_set_status || "-"],
                 ["Последний SET error", snapshot.last_set_error || "-"],
@@ -1040,8 +1091,8 @@
                 const item = document.createElement("div");
                 item.className = "event-item";
                 item.innerHTML = `
-                    <div class="event-type">${label}</div>
-                    <div class="event-main">${value ?? "-"}</div>
+                    <div class="event-type">${escapeHtml(label)}</div>
+                    <div class="event-main">${escapeHtml(value ?? "-")}</div>
                     <div class="event-extra"></div>
                 `;
                 rail.appendChild(item);
@@ -1058,11 +1109,11 @@
             body.innerHTML = bets.map((bet) => `
                 <tr>
                     <td class="mono">${fmtShortTime(bet.timestamp)}</td>
-                    <td>${bet.target || "-"}</td>
-                    <td>${bet.step || "-"}</td>
+                    <td>${escapeHtml(bet.target || "-")}</td>
+                    <td>${escapeHtml(bet.step || "-")}</td>
                     <td>${fmtMoney(bet.amount)}</td>
-                    <td><span class="${statusClass(bet.status)}">${bet.status || "-"}</span></td>
-                    <td>${bet.result || "-"}</td>
+                    <td><span class="${statusClass(bet.status)}">${escapeHtml(bet.status || "-")}</span></td>
+                    <td>${escapeHtml(bet.result || "-")}</td>
                 </tr>
             `).join("");
         }
@@ -1081,8 +1132,8 @@
                 return `
                     <tr>
                         <td class="mono">${fmtShortTime(round.timestamp)}</td>
-                        <td>${round.player_name || "unknown"}</td>
-                        <td>${round.position || "-"}</td>
+                        <td>${escapeHtml(round.player_name || "unknown")}</td>
+                        <td>${escapeHtml(round.position || "-")}</td>
                         <td>${round.red_value ?? "-"}</td>
                         <td>${round.yellow_value ?? "-"}</td>
                         <td>${red}, ${yellow}</td>
@@ -1101,26 +1152,32 @@
             list.innerHTML = events.map((event) => `
                 <div class="event-item">
                     <div>
-                        <div class="event-type">${event.event_type || "event"}</div>
+                        <div class="event-type">${escapeHtml(event.event_type || "event")}</div>
                         <div class="event-extra mono">${fmtDateTime(event.timestamp)}</div>
                     </div>
                     <div>
-                        <div class="event-main">round=${event.last_round_result || "-"}</div>
-                        <div class="event-extra">set=${event.last_set_status || "-"}</div>
+                        <div class="event-main">round=${escapeHtml(event.last_round_result || "-")}</div>
+                        <div class="event-extra">set=${escapeHtml(event.last_set_status || "-")}</div>
                     </div>
                     <div class="event-extra mono">session=${fmtMoney(event.session_balance)} / real=${fmtMoney(event.account_balance)}</div>
                 </div>
             `).join("");
         }
 
-        function makePath(points, width, height, minValue, maxValue) {
-            if (!points.length) return "";
+        function makePathFromSeries(series, width, height, accessor, minValue, maxValue) {
+            if (!series.length) return "";
             const span = Math.max(maxValue - minValue, 1);
-            return points.map((point, index) => {
-                const x = points.length === 1 ? width / 2 : (index / (points.length - 1)) * width;
-                const y = height - ((point - minValue) / span) * height;
-                return `${index === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`;
-            }).join(" ");
+            const commands = [];
+            series.forEach((entry, index) => {
+                const point = accessor(entry);
+                if (point === null || point === undefined || Number.isNaN(Number(point))) {
+                    return;
+                }
+                const x = series.length === 1 ? width / 2 : (index / (series.length - 1)) * width;
+                const y = height - ((Number(point) - minValue) / span) * height;
+                commands.push(`${commands.length === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`);
+            });
+            return commands.join(" ");
         }
 
         function renderChart(series) {
@@ -1133,13 +1190,13 @@
 
             const width = 800;
             const height = 290;
-            const session = series.filter((item) => item.session_balance !== null).map((item) => Number(item.session_balance));
-            const real = series.filter((item) => item.account_balance !== null).map((item) => Number(item.account_balance));
-            const all = session.concat(real);
+            const session = series.map((item) => item.session_balance !== null ? Number(item.session_balance) : null);
+            const real = series.map((item) => item.account_balance !== null ? Number(item.account_balance) : null);
+            const all = session.concat(real).filter((item) => item !== null);
             const minValue = Math.min(...all);
             const maxValue = Math.max(...all);
-            const sessionPath = makePath(session, width, height, minValue, maxValue);
-            const realPath = makePath(real, width, height, minValue, maxValue);
+            const sessionPath = makePathFromSeries(series, width, height, (item) => item.session_balance, minValue, maxValue);
+            const realPath = makePathFromSeries(series, width, height, (item) => item.account_balance, minValue, maxValue);
 
             svg.innerHTML = `
                 <path d="${sessionPath}" fill="none" stroke="#1f7a4d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -1167,8 +1224,8 @@
             const all = wins.concat(losses);
             const minValue = Math.min(...all);
             const maxValue = Math.max(...all);
-            const winsPath = makePath(wins, width, height, minValue, maxValue);
-            const lossesPath = makePath(losses, width, height, minValue, maxValue);
+            const winsPath = makePathFromSeries(series, width, height, (item) => item.wins ?? 0, minValue, maxValue);
+            const lossesPath = makePathFromSeries(series, width, height, (item) => item.losses ?? 0, minValue, maxValue);
 
             svg.innerHTML = `
                 <path d="${winsPath}" fill="none" stroke="#bb7a22" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -1196,7 +1253,7 @@
             const net = series.map((item) => Number(item.net ?? 0));
             const minValue = Math.min(...net);
             const maxValue = Math.max(...net);
-            const netPath = makePath(net, width, height, minValue, maxValue);
+            const netPath = makePathFromSeries(series, width, height, (item) => item.net ?? 0, minValue, maxValue);
 
             svg.innerHTML = `
                 <path d="${netPath}" fill="none" stroke="#6e56cf" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -1219,8 +1276,8 @@
             const all = rolling20.concat(rolling50);
             const minValue = Math.min(...all);
             const maxValue = Math.max(...all);
-            const rolling20Path = makePath(rolling20, width, height, minValue, maxValue);
-            const rolling50Path = makePath(rolling50, width, height, minValue, maxValue);
+            const rolling20Path = makePathFromSeries(series, width, height, (item) => item.rolling20 ?? 0, minValue, maxValue);
+            const rolling50Path = makePathFromSeries(series, width, height, (item) => item.rolling50 ?? 0, minValue, maxValue);
 
             svg.innerHTML = `
                 <path d="${rolling20Path}" fill="none" stroke="#1f7a4d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -1230,20 +1287,33 @@
         }
 
         async function refresh() {
-            const response = await fetch("/api/overview", { cache: "no-store" });
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
+            const [statusResponse, historyResponse, chartsResponse] = await Promise.all([
+                fetch("/api/status", { cache: "no-store" }),
+                fetch("/api/history", { cache: "no-store" }),
+                fetch("/api/charts", { cache: "no-store" }),
+            ]);
+
+            for (const response of [statusResponse, historyResponse, chartsResponse]) {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
             }
-            const data = await response.json();
-            renderSummary(data.snapshot, data.summary);
-            renderBets(data.recent_bets || []);
-            renderRounds(data.recent_rounds || []);
-            renderEvents(data.recent_events || []);
-            renderChart(data.balance_series || []);
-            renderResultsChart(data.result_curve || []);
-            renderNetChart(data.result_curve || []);
-            renderRollingChart(data.result_curve || []);
-            maybeCelebrateWin(resolveLatestWin(data));
+
+            const [statusData, historyData, chartData] = await Promise.all([
+                statusResponse.json(),
+                historyResponse.json(),
+                chartsResponse.json(),
+            ]);
+
+            renderSummary(statusData.snapshot, statusData.summary);
+            renderBets(historyData.recent_bets || []);
+            renderRounds(historyData.recent_rounds || []);
+            renderEvents(historyData.recent_events || []);
+            renderChart(chartData.balance_series || []);
+            renderResultsChart(chartData.result_curve || []);
+            renderNetChart(chartData.result_curve || []);
+            renderRollingChart(chartData.result_curve || []);
+            maybeCelebrateWin(resolveLatestWin(statusData));
         }
 
         async function boot() {
@@ -1251,12 +1321,14 @@
                 await refresh();
             } catch (error) {
                 console.error(error);
+                renderAlert(`Ошибка загрузки dashboard: ${error.message}`, "error");
             }
             window.setInterval(async () => {
                 try {
                     await refresh();
                 } catch (error) {
                     console.error(error);
+                    renderAlert(`Ошибка обновления dashboard: ${error.message}`, "error");
                 }
             }, 5000);
         }

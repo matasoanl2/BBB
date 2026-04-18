@@ -20,6 +20,7 @@ def wire_ws_logging(
     update_balance_from_accounting_payload_func,
     save_target_ws_message_func,
     process_betting_round_func,
+    schedule_background_task_func,
 ) -> None:
     """Подключить обработчики websocket для target- и accounting-каналов страницы."""
 
@@ -55,6 +56,7 @@ def wire_ws_logging(
 
         is_target = ws.url.startswith(browser_config.target_ws_url)
         is_accounting = ws.url.startswith(browser_config.accounting_ws_url)
+        accounting_ws_token = runtime_context.issue_accounting_ws_token() if is_accounting else None
         tag = "TARGET-WS" if is_target else "WS"
         if is_accounting:
             betting_state["accounting_ws_connected"] = True
@@ -76,6 +78,8 @@ def wire_ws_logging(
                 print(f"[{tag} <<] {format_ws_payload_func(payload)}", flush=True)
 
             if is_accounting:
+                if not runtime_context.is_active_accounting_ws_token(accounting_ws_token):
+                    return
                 update_balance_from_accounting_payload_func(payload)
 
             if is_target:
@@ -85,12 +89,21 @@ def wire_ws_logging(
                     if snapshot_extra is not None:
                         update_runtime_snapshot_func("collector_round_ingress", snapshot_extra)
                 if runtime_config.betting.enabled:
-                    asyncio.create_task(process_betting_round_func(page, payload))
+                    async def _run_round_pipeline() -> None:
+                        async with runtime_context.ensure_round_processing_lock():
+                            await process_betting_round_func(page, payload)
+
+                    schedule_background_task_func(
+                        _run_round_pipeline(),
+                        description="process betting round",
+                    )
 
         def on_close(*_) -> None:
             """Отметить закрытие accounting websocket и обновить runtime snapshot."""
 
             if is_accounting:
+                if not runtime_context.is_active_accounting_ws_token(accounting_ws_token):
+                    return
                 betting_state["accounting_ws_connected"] = False
                 betting_state["last_accounting_ws_closed_at"] = datetime.now(timezone.utc).isoformat()
                 update_runtime_snapshot_func("accounting_ws_close")

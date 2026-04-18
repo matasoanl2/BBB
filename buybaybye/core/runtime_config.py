@@ -185,6 +185,35 @@ class RuntimeConfig:
     colors: ColorConfig
 
 
+def validate_runtime_config(config: RuntimeConfig) -> None:
+    """Fail fast on invalid env-derived configuration."""
+
+    if config.betting.base_bet <= 0:
+        raise ValueError("[ERROR] BASE_BET должен быть положительным числом.")
+    if config.betting.bet_delay_min < 0 or config.betting.bet_delay_max < 0:
+        raise ValueError("[ERROR] BET_DELAY_MIN и BET_DELAY_MAX не могут быть отрицательными.")
+    if config.betting.bet_delay_min > config.betting.bet_delay_max:
+        raise ValueError("[ERROR] BET_DELAY_MIN не может быть больше BET_DELAY_MAX.")
+    if config.dynamic_betting.window_size <= 0:
+        raise ValueError("[ERROR] DYNAMIC_WINDOW_SIZE должен быть больше 0.")
+    if config.dynamic_betting.recalc_interval <= 0:
+        raise ValueError("[ERROR] DYNAMIC_RECALC_INTERVAL должен быть больше 0.")
+    if config.dynamic_betting.random_fallback_loss_streak <= 0:
+        raise ValueError("[ERROR] DYNAMIC_RANDOM_FALLBACK_LOSS_STREAK должен быть больше 0.")
+    if config.accounting.balance_stale_seconds <= 0:
+        raise ValueError("[ERROR] ACCOUNTING_BALANCE_STALE_SECONDS должен быть больше 0.")
+    if config.accounting.recovery_reload_seconds <= 0:
+        raise ValueError("[ERROR] ACCOUNTING_RECOVERY_RELOAD_SECONDS должен быть больше 0.")
+    if config.accounting.recovery_cooldown_seconds < 0:
+        raise ValueError("[ERROR] ACCOUNTING_RECOVERY_COOLDOWN_SECONDS не может быть отрицательным.")
+    if config.accounting.monitor_poll_seconds <= 0:
+        raise ValueError("[ERROR] ACCOUNTING_MONITOR_POLL_SECONDS должен быть больше 0.")
+    if config.telegram.request_timeout_seconds <= 0:
+        raise ValueError("[ERROR] TELEGRAM_REQUEST_TIMEOUT_SECONDS должен быть больше 0.")
+    if config.telegram.notification_cooldown_seconds < 0:
+        raise ValueError("[ERROR] TELEGRAM_NOTIFICATION_COOLDOWN_SECONDS не может быть отрицательным.")
+
+
 def _load_runtime_role(raw_value: str | None, *, requested_betting_enabled: bool) -> RuntimeRoleConfig:
     normalized_value = (raw_value or ("bettor" if requested_betting_enabled else "collector")).strip().lower()
 
@@ -236,7 +265,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
         reset="\033[0m" if color_enabled else "",
     )
 
-    return RuntimeConfig(
+    config = RuntimeConfig(
         role=runtime_role,
         browser=BrowserConfig(
             session_dir=app_dir / "profile",
@@ -304,3 +333,5 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
         ),
         colors=colors,
     )
+    validate_runtime_config(config)
+    return config

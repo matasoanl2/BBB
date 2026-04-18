@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from buybaybye.modules.browser_ws import wire_ws_logging as _browser_wire_ws_logging
+from buybaybye.modules.db import ensure_runtime_schema as _db_ensure_runtime_schema
 from buybaybye.modules.db import get_db_connection as _db_get_db_connection
 from buybaybye.modules.db import save_target_ws_message as _db_save_target_ws_message
 from buybaybye.core.runtime_config import RuntimeConfig
@@ -24,6 +25,11 @@ class InfrastructureRuntimeService:
         """Создать подключение к рабочей PostgreSQL-базе рантайма."""
 
         return _db_get_db_connection(database_config=self.runtime_config.database)
+
+    def ensure_runtime_schema(self) -> None:
+        """Initialize runtime schema once before hot-path DB usage."""
+
+        _db_ensure_runtime_schema(database_config=self.runtime_config.database)
 
     def format_ws_payload(self, payload: object) -> str:
         """Преобразовать websocket payload в строку для логов и хранения."""
@@ -70,6 +76,7 @@ class InfrastructureRuntimeService:
         update_runtime_snapshot_func,
         update_balance_from_accounting_payload_func,
         process_betting_round_func,
+        schedule_background_task_func,
     ) -> None:
         """Подключить websocket wiring страницы к accounting и betting обработчикам."""
 
@@ -82,4 +89,5 @@ class InfrastructureRuntimeService:
             update_balance_from_accounting_payload_func=update_balance_from_accounting_payload_func,
             save_target_ws_message_func=self.save_target_ws_message,
             process_betting_round_func=process_betting_round_func,
+            schedule_background_task_func=schedule_background_task_func,
         )

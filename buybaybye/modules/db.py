@@ -10,8 +10,26 @@ from psycopg2.extras import Json
 from buybaybye.core.runtime_config import DatabaseConfig
 
 
-def get_db_connection(*, database_config: DatabaseConfig):
-    """Создать подключение к PostgreSQL и гарантировать наличие runtime-схемы."""
+_INITIALIZED_DATABASES: set[tuple[str, str, str, str, str]] = set()
+
+
+def _database_identity(database_config: DatabaseConfig) -> tuple[str, str, str, str, str]:
+    return (
+        database_config.host,
+        database_config.port,
+        database_config.user,
+        database_config.password,
+        database_config.name,
+    )
+
+
+def ensure_runtime_schema(*, database_config: DatabaseConfig) -> None:
+    """Initialize runtime schema once per configured database."""
+
+    identity = _database_identity(database_config)
+    if identity in _INITIALIZED_DATABASES:
+        return
+
     conn = psycopg2.connect(
         user=database_config.user,
         password=database_config.password,
@@ -77,10 +95,22 @@ def get_db_connection(*, database_config: DatabaseConfig):
         """
     )
     cursor.execute("""CREATE INDEX IF NOT EXISTS idx_runtime_events_timestamp ON runtime_events(timestamp)""")
-
+    cursor.execute("""CREATE INDEX IF NOT EXISTS idx_runtime_events_id ON runtime_events(id)""")
     conn.commit()
     cursor.close()
-    return conn
+    conn.close()
+    _INITIALIZED_DATABASES.add(identity)
+
+
+def get_db_connection(*, database_config: DatabaseConfig):
+    """Создать подключение к PostgreSQL и гарантировать наличие runtime-схемы."""
+    return psycopg2.connect(
+        user=database_config.user,
+        password=database_config.password,
+        host=database_config.host,
+        port=database_config.port,
+        database=database_config.name,
+    )
 
 
 def save_target_ws_message(*, payload_text: str, get_db_connection_func) -> None:

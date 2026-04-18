@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from buybaybye.core.runtime_state import build_runtime_betting_state
+
 
 def validate_strategy_coefficients(strategy_name: str, coefficients: list, base_bet: float) -> tuple[bool, str]:
     """Проверить, что коэффициенты стратегии сохраняют кратность ставки десяти."""
@@ -79,52 +81,8 @@ def load_strategies(strategies_dir: Path, base_bet: float) -> dict:
 
 def init_betting_state(strategy: dict, bet_mode_outcome: str, bet_mode_specifier: str) -> dict:
     """Инициализировать betting state для выбранной стратегии и цели ставки."""
-    return {
-        "current_step": 0,
-        "consecutive_losses": 0,
-        "session_balance": 0.0,
-        "account_balance": None,
-        "account_balance_type": None,
-        "account_balance_updated_at": None,
-        "last_accounting_ws_message_at": None,
-        "last_accounting_ws_opened_at": None,
-        "last_accounting_ws_closed_at": None,
-        "accounting_ws_connected": False,
-        "last_accounting_rejection_reason": None,
-        "last_accounting_recovery_at": None,
-        "accounting_recovery_attempts": 0,
-        "pending_expected_bet_drop": 0.0,
-        "pending_expected_settlement_credit": 0.0,
-        "external_deposits_total": 0.0,
-        "external_withdrawals_total": 0.0,
-        "low_balance_pause_active": False,
-        "low_balance_pause_required_balance": 0.0,
-        "low_balance_pause_started_at": None,
-        "low_balance_pause_targets": [],
-        "last_bet_amount": 0.0,
-        "last_set_amount": 0.0,
-        "last_set_status": None,
-        "last_set_error": None,
-        "total_bet_amount": 0.0,
-        "total_profit": 0.0,
-        "total_bets_placed": 0,
-        "total_bet_rounds": 0,
-        "last_bet_round_number": 0,
-        "last_round_result": None,
-        "last_round_game_id": None,
-        "last_round_status": None,
-        "last_round_timestamp": None,
-        "last_round_player_name": None,
-        "last_round_position": None,
-        "combo_stats": {
-            "red_1": 0, "red_2": 0, "red_3": 0, "red_4": 0, "red_5": 0, "red_6": 0,
-            "yellow_1": 0, "yellow_2": 0, "yellow_3": 0, "yellow_4": 0, "yellow_5": 0, "yellow_6": 0,
-        },
-        "double_stats": {"doubles": 0, "no_doubles": 0},
-        "reported_20_rounds": [],
-        "recent_bets": [],
-        "pending_bets": [],
-        "dynamic_outcome": bet_mode_outcome,
-        "dynamic_specifier": bet_mode_specifier,
-        "strategy": strategy,
-    }
+    return build_runtime_betting_state(
+        strategy=strategy,
+        bet_mode_outcome=bet_mode_outcome,
+        bet_mode_specifier=bet_mode_specifier,
+    )

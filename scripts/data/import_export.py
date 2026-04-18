@@ -1,25 +1,24 @@
 """Импортировать JSON game data в PostgreSQL и экспортировать обратно по частям."""
+from __future__ import annotations
+
+import argparse
 import json
-import os
 import sys
 from pathlib import Path
 from datetime import datetime
-import psycopg2
 from psycopg2.extras import Json
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from scripts.common.offline_support import connect_postgres, load_database_settings
 
 try:
     from tqdm import tqdm
 except ImportError:
-    print("⚠️  Для прогресс-бара нужна библиотека 'tqdm'. Устанавливаю...")
-    os.system("pip install tqdm")
-    from tqdm import tqdm
+    raise RuntimeError("Для import/export требуется установленная библиотека tqdm.")
 
-# PostgreSQL config
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "buybaybye")
+DB_SETTINGS = load_database_settings()
 
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 МБ в байтах
 
@@ -27,14 +26,7 @@ MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 МБ в байтах
 def get_db_connection():
     """Вернуть подключение к PostgreSQL для операций импорта и экспорта."""
 
-    conn = psycopg2.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME
-    )
-    return conn
+    return connect_postgres(DB_SETTINGS)
 
 
 def init_db():
@@ -244,42 +236,32 @@ def export_to_json_chunked(output_dir: str = "."):
         return False
 
 
-def main():
+def main(argv: list[str] | None = None):
     """CLI-точка входа для сценария импорта и экспорта JSON."""
 
-    if len(sys.argv) < 2:
-        print("Использование:")
-        print("  python import_export.py import <json_file> [--skip-duplicates]  - Импортировать JSON в БД")
-        print("  python import_export.py export [output_dir]                     - Экспортировать БД в JSON (по 100МБ)")
-        print("\nФлаги:")
-        print("  --skip-duplicates   - Не проверять на дубликаты через timestamp (импортировать всё)")
-        print("\nПримеры:")
-        print("  python import_export.py import target_ws_messages.json")
-        print("  python import_export.py import data.json --skip-duplicates")
-        print("  python import_export.py export ./exports")
-        sys.exit(1)
-    
-    command = sys.argv[1].lower()
-    
-    if command == "import":
-        if len(sys.argv) < 3:
-            print("❌ Укажите файл JSON для импорта")
-            print("  python import_export.py import <json_file> [--skip-duplicates]")
-            sys.exit(1)
-        
-        json_file = sys.argv[2]
-        # Проверить наличие флага --skip-duplicates (инвертируем логику: skip_duplicates_check = False означает не проверять)
-        skip_check = "--skip-duplicates" not in sys.argv
-        
-        import_from_json(json_file, skip_duplicates_check=skip_check)
-    
-    elif command == "export":
-        output_dir = sys.argv[2] if len(sys.argv) > 2 else "."
-        export_to_json_chunked(output_dir)
-    
-    else:
-        print(f"❌ Неизвестная команда: {command}")
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Импорт и экспорт game_results между JSON и PostgreSQL")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    import_parser = subparsers.add_parser("import", help="Импортировать JSON в PostgreSQL")
+    import_parser.add_argument("json_file", help="Путь к JSON-файлу")
+    import_parser.add_argument(
+        "--skip-duplicates",
+        action="store_true",
+        help="Не делать coarse timestamp-проверку дубликатов, пытаться импортировать все записи",
+    )
+
+    export_parser = subparsers.add_parser("export", help="Экспортировать PostgreSQL в chunked JSON")
+    export_parser.add_argument("output_dir", nargs="?", default=".", help="Директория для файлов экспорта")
+
+    args = parser.parse_args(argv)
+
+    if args.command == "import":
+        import_from_json(args.json_file, skip_duplicates_check=not args.skip_duplicates)
+        return
+
+    if args.command == "export":
+        export_to_json_chunked(args.output_dir)
+        return
 
 
 if __name__ == "__main__":

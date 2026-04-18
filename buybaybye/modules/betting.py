@@ -447,6 +447,7 @@ async def place_bets(
                 betting_state["total_bet_rounds"] = current_round_number
                 betting_state["last_bet_round_number"] = current_round_number
                 betting_state["pending_expected_bet_drop"] = float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0) + total_round_amount
+                betting_state["reconciliation_phase"] = "awaiting_bet_drop"
                 betting_state["last_bet_amount"] = total_round_amount
                 betting_state["last_set_amount"] = total_round_amount
                 betting_state["last_set_status"] = "pending"
@@ -805,6 +806,15 @@ async def process_betting_round(
     if not isinstance(parsed_payload, dict) or parsed_payload.get("status") != "rng_values":
         return
 
+    game_id_value = parsed_payload.get("game_id")
+    game_id = str(game_id_value).strip() if game_id_value is not None else None
+    if game_id and betting_state.has_processed_round(game_id):
+        if bet_debug_enabled:
+            print(f"[DEBUG PROCESS] Пропускаем duplicate game_id={game_id}", flush=True)
+        return
+    if game_id:
+        betting_state.mark_round_processed(game_id)
+
     results = parsed_payload.get("results")
     if not isinstance(results, dict):
         return
@@ -867,6 +877,7 @@ async def process_betting_round(
                     settlement_credit += bet_amount * payout_coeff
                 round_margin += margin
                 resolved_token = pending_bet.get("token") or _format_bet_target_token(target.outcome, target.specifier)
+                betting_state.remember_recent_bet(combo=resolved_token, result=is_win)
                 resolved_target_tokens.append(resolved_token)
                 round_target_labels.append(format_outcome_pretty_func(target.outcome, target.specifier))
 
@@ -883,6 +894,7 @@ async def process_betting_round(
             max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
             betting_state["pending_bets"] = []
             betting_state["pending_expected_settlement_credit"] = settlement_credit
+            betting_state["reconciliation_phase"] = "awaiting_settlement" if settlement_credit > 0.009 else "idle"
             betting_state["total_profit"] += round_margin
             betting_state["session_balance"] += round_margin
 

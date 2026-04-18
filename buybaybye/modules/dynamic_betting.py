@@ -33,6 +33,7 @@ def analyze_all_results_frequency(
     *,
     runtime_context: RuntimeContext,
     runtime_config: RuntimeConfig,
+    get_db_connection_func=None,
 ) -> dict:
     """Посчитать частоты комбинаций по historical game_results с учетом dynamic-фильтров."""
 
@@ -41,7 +42,7 @@ def analyze_all_results_frequency(
     dynamic_config = runtime_config.dynamic_betting
     bet_debug_enabled = runtime_config.betting.debug_enabled
     try:
-        conn = psycopg2.connect(
+        conn = get_db_connection_func() if get_db_connection_func is not None else psycopg2.connect(
             host=database_config.host,
             port=database_config.port,
             user=database_config.user,

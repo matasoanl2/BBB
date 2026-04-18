@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import statistics
 from datetime import datetime
 from pathlib import Path
 
-import psycopg2
-import yaml
 from tabulate import tabulate
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from scripts.common.offline_support import load_database_settings, load_rounds_from_db, load_yaml_strategies
 
 # UTF-8 encoding support
 if sys.stdout.encoding and sys.stdout.encoding.lower() not in ['utf-8', 'utf8']:
@@ -19,73 +21,29 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() not in ['utf-8', 'utf8']:
     except Exception:
         pass
 
-# === DATABASE CONFIG ===
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "buybaybye")
-
 ROOT_DIR = Path(__file__).resolve().parents[2]
 STRATEGIES_DIR = ROOT_DIR / "strategies"
+DB_SETTINGS = load_database_settings()
 
 
 # ---------------------------------------------------------------------------
 # Загрузка данных
 # ---------------------------------------------------------------------------
 
-def _parse_time_filter(tf: str):
-    """Преобразовать человекочитаемый time filter в SQL interval tuple."""
-    import re
-    if tf == "all":
-        return False, None
-    try:
-        return True, f"{int(tf)} hours"
-    except ValueError:
-        pass
-    m = re.match(r'^(\d+)\s*(hour|hours|day|days|week|weeks|month|months)$', tf.strip(), re.I)
-    if not m:
-        print(f"❌ Неверный формат периода: '{tf}'")
-        sys.exit(1)
-    unit = m.group(2).lower().rstrip('s')
-    unit_map = {'hour': 'hours', 'day': 'days', 'week': 'weeks', 'month': 'months'}
-    return True, f"{m.group(1)} {unit_map.get(unit, unit + 's')}"
-
-
 def load_rounds(time_filter: str = "1day"):
     """Загрузить исторические раунды из PostgreSQL для выбранного окна времени."""
 
-    use_filter, interval = _parse_time_filter(time_filter)
-    conn = psycopg2.connect(user=DB_USER, password=DB_PASSWORD,
-                            host=DB_HOST, port=DB_PORT, database=DB_NAME)
-    cur = conn.cursor()
-    if use_filter:
-        cur.execute(
-            "SELECT timestamp, player_name, dice_results FROM game_results "
-            f"WHERE timestamp >= NOW() - INTERVAL '{interval}' ORDER BY timestamp"
-        )
-    else:
-        cur.execute("SELECT timestamp, player_name, dice_results FROM game_results ORDER BY timestamp")
-    rows = cur.fetchall()
-    cur.close()
-    conn.close()
-    rounds = []
-    for ts, pn, dr in rows:
-        rounds.append({"results": {**dr, "player": {"name": pn}}})
-    return rounds
+    return load_rounds_from_db(settings=DB_SETTINGS, time_filter=time_filter)
 
 
 def load_strategies():
     """Загрузить все YAML-стратегии, используемые в сравнительном отчете."""
 
-    strats = {}
-    for f in sorted(STRATEGIES_DIR.glob("*.yaml")):
-        try:
-            with open(f, encoding="utf-8") as fh:
-                strats[f.stem] = yaml.safe_load(fh)
-        except Exception as e:
-            print(f"⚠️  Ошибка загрузки {f.name}: {e}")
-    return strats
+    try:
+        return load_yaml_strategies(STRATEGIES_DIR)
+    except Exception as exc:
+        print(f"⚠️  Ошибка загрузки стратегий: {exc}")
+        return {}
 
 
 # ---------------------------------------------------------------------------

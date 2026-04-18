@@ -417,7 +417,7 @@
                     Одна панель для рантайм-состояния, балансов, последних ставок, выпавших раундов и событий сессии. Экран обновляется автоматически и читает только PostgreSQL + runtime snapshot.
                 </div>
                 <div class="hero-meta">
-                    <div class="chip">URL: <span class="mono">/api/overview</span></div>
+                    <div class="chip">URL: <span class="mono">/api/status</span> + <span class="mono">/api/history</span> + <span class="mono">/api/charts</span></div>
                     <div class="chip">Обновление: каждые 5 секунд</div>
                     <div class="chip">Источник: <span class="mono">runtime_snapshot</span> + history</div>
                 </div>
@@ -874,19 +874,32 @@
         }
 
         async function refresh() {
-            const response = await fetch("/api/overview", { cache: "no-store" });
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
+            const [statusResponse, historyResponse, chartsResponse] = await Promise.all([
+                fetch("/api/status", { cache: "no-store" }),
+                fetch("/api/history", { cache: "no-store" }),
+                fetch("/api/charts", { cache: "no-store" }),
+            ]);
+
+            for (const response of [statusResponse, historyResponse, chartsResponse]) {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
             }
-            const data = await response.json();
-            renderSummary(data.snapshot, data.summary);
-            renderBets(data.recent_bets || []);
-            renderRounds(data.recent_rounds || []);
-            renderEvents(data.recent_events || []);
-            renderChart(data.balance_series || []);
-            renderResultsChart(data.result_curve || []);
-            renderNetChart(data.result_curve || []);
-            renderRollingChart(data.result_curve || []);
+
+            const [statusData, historyData, chartData] = await Promise.all([
+                statusResponse.json(),
+                historyResponse.json(),
+                chartsResponse.json(),
+            ]);
+
+            renderSummary(statusData.snapshot, statusData.summary);
+            renderBets(historyData.recent_bets || []);
+            renderRounds(historyData.recent_rounds || []);
+            renderEvents(historyData.recent_events || []);
+            renderChart(chartData.balance_series || []);
+            renderResultsChart(chartData.result_curve || []);
+            renderNetChart(chartData.result_curve || []);
+            renderRollingChart(chartData.result_curve || []);
         }
 
         async function boot() {

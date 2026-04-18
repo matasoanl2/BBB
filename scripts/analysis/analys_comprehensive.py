@@ -2,16 +2,18 @@
 Полный анализ всех комбинаций red/yellow (1-6) со всеми стратегиями
 Выводит результаты по каждой комбинации и стратегии, затем ТОП-5 по выигрышам
 """
-import os
 import sys
-import psycopg2
-import yaml
 import argparse
 import statistics
 from datetime import datetime
 from pathlib import Path
 from itertools import product
 from tabulate import tabulate
+
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from scripts.common.offline_support import load_database_settings, load_rounds_from_db, load_yaml_strategies, parse_time_filter
 
 # UTF-8 encoding support
 if sys.stdout.encoding.lower() not in ['utf-8', 'utf8']:
@@ -27,16 +29,10 @@ DICE_NUMBERS = [1, 2, 3, 4, 5, 6]
 DICE_COLORS = ["red", "yellow"]
 DICE_DOUBLES = [1, 2, 3, 4, 5, 6]  # Дубли (оба кубика одинакового значения)
 
-# === DATABASE CONFIG ===
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = os.getenv("DB_PORT", "5432")
-DB_NAME = os.getenv("DB_NAME", "buybaybye")
-
 # === PATHS ===
 ROOT_DIR = Path(__file__).resolve().parents[2]
 STRATEGIES_DIR = ROOT_DIR / "strategies"
+DB_SETTINGS = load_database_settings()
 
 
 def parse_time_period(time_filter):
@@ -54,22 +50,9 @@ def parse_time_period(time_filter):
         tuple: (use_filter: bool, interval_str: str for SQL)
             или None если 'all'
     """
-    import re
-    
-    if time_filter == "all":
-        return (False, None)
-    
-    # Пытаемся распарсить как регулярное число (часы для обратной совместимости)
     try:
-        hours = int(time_filter)
-        return (True, f"{hours} hours")
+        return parse_time_filter(time_filter)
     except ValueError:
-        pass
-    
-    # Ищем шаблон "number + unit"
-    match = re.match(r'^(\d+)\s*(hour|hours|day|days|week|weeks|month|months)$', time_filter.strip(), re.IGNORECASE)
-    
-    if not match:
         raise ValueError(
             f"❌ Неверный формат периода: '{time_filter}'\n"
             f"Поддерживаемые форматы:\n"
@@ -81,75 +64,11 @@ def parse_time_period(time_filter):
             f"Пример: --time-filter 6hours или --time-filter 1day"
         )
     
-    number = match.group(1)
-    unit = match.group(2).lower().rstrip('s')  # Приводим "hours" -> "hour", "days" -> "day"
-    
-    # Нормализуем единицы для SQL
-    unit_map = {
-        'hour': 'hours',
-        'day': 'days',
-        'week': 'weeks',
-        'month': 'months'
-    }
-    
-    sql_unit = unit_map.get(unit, unit + 's')
-    interval_str = f"{number} {sql_unit}"
-    
-    return (True, interval_str)
-
-
 def get_rounds_from_db(time_filter="all"):
     """Загрузить историю раундов из PostgreSQL для выбранного time filter."""
 
     try:
-        # Парсим время фильтра
-        try:
-            use_filter, interval_str = parse_time_period(time_filter)
-        except ValueError as e:
-            print(str(e))
-            exit(1)
-        
-        conn = psycopg2.connect(
-            user=DB_USER,
-            password=DB_PASSWORD,
-            host=DB_HOST,
-            port=DB_PORT,
-            database=DB_NAME
-        )
-        cursor = conn.cursor()
-        
-        # SQL запрос с опциональным фильтром времени
-        if not use_filter:
-            query = """
-                SELECT timestamp, player_name, dice_results 
-                FROM game_results 
-                ORDER BY timestamp ASC
-            """
-        else:
-            query = f"""
-                SELECT timestamp, player_name, dice_results 
-                FROM game_results 
-                WHERE timestamp >= NOW() - INTERVAL '{interval_str}'
-                ORDER BY timestamp ASC
-            """
-        
-        cursor.execute(query)
-        rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
-        rounds = []
-        for row in rows:
-            timestamp, player_name, dice_results = row
-            rounds.append({
-                "timestamp": timestamp.isoformat() if isinstance(timestamp, datetime) else str(timestamp),
-                "results": {
-                    **dice_results,
-                    "player": {"name": player_name}
-                }
-            })
-        
-        return rounds
+        return load_rounds_from_db(settings=DB_SETTINGS, time_filter=time_filter)
     except Exception as e:
         print(f"❌ Ошибка подключения к БД: {e}")
         print("Убедитесь, что PostgreSQL запущен и доступен.")
@@ -159,22 +78,15 @@ def get_rounds_from_db(time_filter="all"):
 def load_strategies():
     """Загрузить все описания стратегий из папки strategies."""
 
-    strategies = {}
-    
     if not STRATEGIES_DIR.exists():
         print(f"❌ Папка стратегий не найдена: {STRATEGIES_DIR}")
-        return strategies
-    
-    for strategy_file in sorted(STRATEGIES_DIR.glob("*.yaml")):
-        try:
-            with open(strategy_file, "r", encoding="utf-8") as f:
-                strategy = yaml.safe_load(f)
-                strategy_name = strategy_file.stem
-                strategies[strategy_name] = strategy
-        except Exception as e:
-            print(f"⚠️  Ошибка загрузки стратегии {strategy_file.name}: {e}")
-    
-    return strategies
+        return {}
+
+    try:
+        return load_yaml_strategies(STRATEGIES_DIR)
+    except Exception as exc:
+        print(f"⚠️  Ошибка загрузки стратегий: {exc}")
+        return {}
 
 
 def calculate_periodicity(rounds, bet_type, bet_value):

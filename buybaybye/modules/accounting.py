@@ -129,6 +129,8 @@ def update_balance_from_accounting_payload(
     pending_expected_settlement_credit = float(betting_state.get("pending_expected_settlement_credit", 0.0) or 0.0)
     withdrawal_detected = False
     withdrawal_amount = 0.0
+    deposit_detected = False
+    deposit_amount = 0.0
 
     if isinstance(previous_balance, (int, float)) and new_balance < previous_balance:
         actual_drop = float(previous_balance) - new_balance
@@ -163,9 +165,42 @@ def update_balance_from_accounting_payload(
         if covered_by_settlement > 0.009 and remaining_rise > 0.0:
             covered_by_pending_drop = min(remaining_rise, pending_expected_bet_drop)
             pending_expected_bet_drop = max(0.0, pending_expected_bet_drop - covered_by_pending_drop)
+            remaining_rise -= covered_by_pending_drop
+        if remaining_rise > 0.009:
+            deposit_detected = True
+            deposit_amount = remaining_rise
+            betting_state["session_balance"] += deposit_amount
+            betting_state["external_deposits_total"] = betting_state.get("external_deposits_total", 0.0) + deposit_amount
+            print(
+                f"[ACCOUNTING] Обнаружено пополнение: +{deposit_amount:.0f}р, session_balance скорректирован до {betting_state['session_balance']:.0f}р",
+                flush=True,
+            )
+            queue_telegram_notification_func(
+                "[BuyBayBye] Обнаружено пополнение средств",
+                (
+                    "Accounting balance вырос вне ожидаемого расчета ставки.\n"
+                    f"Сумма пополнения: {deposit_amount:.0f}р\n"
+                    f"Новый real balance: {new_balance:.0f}р\n"
+                    f"Session balance: {betting_state['session_balance']:.0f}р"
+                ),
+                dedup_key="deposit_detected",
+                enabled=runtime_config.telegram.notify_deposits,
+            )
 
     betting_state["pending_expected_bet_drop"] = pending_expected_bet_drop
     betting_state["pending_expected_settlement_credit"] = pending_expected_settlement_credit
+    if pending_expected_bet_drop > 0.009:
+        betting_state["reconciliation_phase"] = "awaiting_bet_drop"
+    elif pending_expected_settlement_credit > 0.009:
+        betting_state["reconciliation_phase"] = "awaiting_settlement"
+    elif withdrawal_detected:
+        betting_state["reconciliation_phase"] = "external_withdrawal"
+    elif deposit_detected:
+        betting_state["reconciliation_phase"] = "external_deposit"
+    else:
+        betting_state["reconciliation_phase"] = "idle"
+    betting_state["last_external_balance_change_type"] = "deposit" if deposit_detected else ("withdrawal" if withdrawal_detected else None)
+    betting_state["last_external_balance_change_amount"] = deposit_amount if deposit_detected else withdrawal_amount
     betting_state["account_balance"] = new_balance
     betting_state["account_balance_type"] = normalized_balance_type
     betting_state["account_balance_updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -176,6 +211,9 @@ def update_balance_from_accounting_payload(
             "account_balance": new_balance,
             "withdrawal_detected": withdrawal_detected,
             "withdrawal_amount": withdrawal_amount,
+            "deposit_detected": deposit_detected,
+            "deposit_amount": deposit_amount,
+            "reconciliation_phase": betting_state.get("reconciliation_phase"),
         },
     )
 

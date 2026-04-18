@@ -10,6 +10,7 @@ from patchright.async_api import async_playwright, Error as PatchrightError
 from buybaybye.core.runtime_bootstrap import build_runtime_status_line, get_browser_launch_args, print_strategy_startup_info, wait_for_exit_signal
 from buybaybye.core.runtime_config import RuntimeConfig
 from buybaybye.core.runtime_context import RuntimeContext
+from buybaybye.core.runtime_state import build_runtime_betting_state
 from buybaybye.services.runtime_services import RuntimeServices
 from buybaybye.modules.strategies import init_betting_state, load_strategies
 
@@ -22,63 +23,15 @@ class RuntimeApp:
         self.runtime_context = runtime_context
         self.services = services
 
-    def _build_shared_runtime_state(self) -> dict:
-        """Создать базовую форму runtime state, безопасную для collector и bettor."""
-
-        return {
-            "current_step": 0,
-            "consecutive_losses": 0,
-            "session_balance": 0.0,
-            "account_balance": None,
-            "account_balance_type": None,
-            "account_balance_updated_at": None,
-            "last_accounting_ws_message_at": None,
-            "last_accounting_ws_opened_at": None,
-            "last_accounting_ws_closed_at": None,
-            "accounting_ws_connected": False,
-            "last_accounting_rejection_reason": None,
-            "last_accounting_recovery_at": None,
-            "accounting_recovery_attempts": 0,
-            "pending_expected_bet_drop": 0.0,
-            "pending_expected_settlement_credit": 0.0,
-            "external_deposits_total": 0.0,
-            "external_withdrawals_total": 0.0,
-            "low_balance_pause_active": False,
-            "low_balance_pause_required_balance": 0.0,
-            "low_balance_pause_started_at": None,
-            "low_balance_pause_targets": [],
-            "last_bet_amount": 0.0,
-            "last_set_amount": 0.0,
-            "last_set_status": None,
-            "last_set_error": None,
-            "total_bet_amount": 0.0,
-            "total_profit": 0.0,
-            "total_bets_placed": 0,
-            "total_bet_rounds": 0,
-            "last_bet_round_number": 0,
-            "last_round_result": None,
-            "last_round_game_id": None,
-            "last_round_status": None,
-            "last_round_timestamp": None,
-            "last_round_player_name": None,
-            "last_round_position": None,
-            "combo_stats": {
-                "red_1": 0, "red_2": 0, "red_3": 0, "red_4": 0, "red_5": 0, "red_6": 0,
-                "yellow_1": 0, "yellow_2": 0, "yellow_3": 0, "yellow_4": 0, "yellow_5": 0, "yellow_6": 0,
-            },
-            "double_stats": {"doubles": 0, "no_doubles": 0},
-            "reported_20_rounds": [],
-            "recent_bets": [],
-            "pending_bets": [],
-            "dynamic_outcome": self.runtime_context.bet_mode_outcome,
-            "dynamic_specifier": self.runtime_context.bet_mode_specifier,
-            "strategy": None,
-        }
-
     def initialize_runtime_state(self) -> None:
         """Подготовить стратегии, betting state и startup snapshot перед запуском."""
 
-        self.runtime_context.betting_state = self._build_shared_runtime_state()
+        self.runtime_context.betting_state = build_runtime_betting_state(
+            strategy=None,
+            bet_mode_outcome=self.runtime_context.bet_mode_outcome,
+            bet_mode_specifier=self.runtime_context.bet_mode_specifier,
+        )
+        self.services.ensure_runtime_schema()
 
         if self.runtime_config.role.uses_persistent_browser_profile:
             self.runtime_config.browser.session_dir.mkdir(parents=True, exist_ok=True)
@@ -187,7 +140,10 @@ class RuntimeApp:
                     else:
                         raise
             if self.runtime_config.betting.enabled:
-                accounting_monitor_task = asyncio.create_task(self.services.monitor_accounting_ws_health(page))
+                accounting_monitor_task = self.services.schedule_background_task(
+                    self.services.monitor_accounting_ws_health(page),
+                    description="accounting monitor",
+                )
 
             print(
                 build_runtime_status_line(
@@ -204,6 +160,7 @@ class RuntimeApp:
                     await accounting_monitor_task
                 except asyncio.CancelledError:
                     pass
+            await self.runtime_context.cancel_background_tasks()
             await context.close()
             if browser is not None:
                 await browser.close()

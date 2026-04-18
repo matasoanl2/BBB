@@ -1,3 +1,3 @@
-"""Utility script package for BuyBayBye."""
+"""Offline scripts package."""
 
 from __future__ import annotations

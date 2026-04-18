@@ -9,3 +9,5 @@ wcwidth
 fastapi
 uvicorn
 jinja2
+pytest
+httpx
