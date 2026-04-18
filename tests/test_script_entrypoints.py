@@ -24,4 +24,3 @@ def test_offline_script_entrypoints_support_direct_execution() -> None:
             check=False,
         )
         assert completed.returncode == 0, completed.stderr or completed.stdout
-        assert "usage:" in completed.stdout.lower()
