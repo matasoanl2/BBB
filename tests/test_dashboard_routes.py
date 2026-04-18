@@ -130,7 +130,7 @@ def test_safe_result_dice_value_derivation_handles_double_and_single_color() -> 
 
 
 def test_dashboard_template_uses_server_round_display_and_extended_status_mapping() -> None:
-    template_path = Path("d:/Developer/BuyBayBye/dashboard/templates/index.html")
+    template_path = Path(__file__).resolve().parents[1] / "dashboard" / "templates" / "index.html"
     template = template_path.read_text(encoding="utf-8")
 
     assert 'escapeHtml(round.display || "-")' in template
