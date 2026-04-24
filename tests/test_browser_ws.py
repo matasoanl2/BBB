@@ -50,7 +50,7 @@ def make_runtime_config() -> RuntimeConfig:
         database=DatabaseConfig("postgres", "postgres", "localhost", "5432", "buybaybye"),
         betting=BettingConfig(True, True, tuple(), "", None, "red", "5", 10.0, "balanced", 0.8, 1.5, False),
         dynamic_betting=DynamicBettingConfig(True, 40, 5, True, True, True, False, False, True, 15),
-        accounting=AccountingConfig(15.0, 25.0, 30.0, 3.0, False),
+        accounting=AccountingConfig(15.0, 25.0, 30.0, 300.0, 3.0, False),
         telegram=TelegramConfig(False, "", "", 5.0, 60.0, True, True, True, True, True),
         logging=LoggingConfig(False, False),
         colors=ColorConfig(True, "", "", "", "", "", "", ""),

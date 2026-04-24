@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections import Counter
 import psycopg2
 import random
 
 from buybaybye.core.runtime_context import RuntimeContext
-from buybaybye.core.runtime_config import RuntimeConfig
+from buybaybye.core.runtime_config import BetTarget, RuntimeConfig
 
 
 def analyze_recent_bets_stats(*, runtime_context: RuntimeContext) -> dict:
@@ -129,6 +130,145 @@ def analyze_all_results_frequency(
         return {}
 
 
+def _combo_to_target(combo_key: str) -> BetTarget | None:
+    if combo_key == "double":
+        return BetTarget(outcome="double", specifier="")
+
+    parts = combo_key.split("_")
+    if len(parts) != 2:
+        return None
+
+    outcome = parts[0]
+    specifier = parts[1]
+    if outcome not in {"red", "yellow"}:
+        return None
+    if specifier not in {"1", "2", "3", "4", "5", "6"}:
+        return None
+    return BetTarget(outcome=outcome, specifier=specifier)
+
+
+def _combo_color_key(combo_key: str) -> str | None:
+    if combo_key == "double":
+        return "double"
+    if combo_key.startswith("red_"):
+        return "red"
+    if combo_key.startswith("yellow_"):
+        return "yellow"
+    return None
+
+
+def _stats_sort_key(item: tuple[str, dict]) -> tuple[float, int, str]:
+    combo_key, combo_stats = item
+    return (
+        float(combo_stats.get("frequency", 0.0) or 0.0),
+        int(combo_stats.get("freq", 0) or 0),
+        combo_key,
+    )
+
+
+def _build_configured_color_counts(configured_targets: tuple[BetTarget, ...]) -> dict[str, int]:
+    color_counts = Counter({"red": 0, "yellow": 0, "double": 0})
+    for target in configured_targets:
+        if target.outcome == "double":
+            color_counts["double"] += 1
+        elif target.outcome in {"red", "yellow"}:
+            color_counts[target.outcome] += 1
+    return {
+        "red": int(color_counts["red"]),
+        "yellow": int(color_counts["yellow"]),
+        "double": int(color_counts["double"]),
+    }
+
+
+def _apply_dynamic_runtime_state(
+    *,
+    runtime_context: RuntimeContext,
+    outcome: str,
+    specifier: str,
+    dynamic_targets: list[str],
+    dynamic_color_counts: dict[str, int],
+) -> None:
+    """Синхронизировать runtime target и dynamic state в betting_state."""
+
+    runtime_context.set_current_bet_target(outcome, specifier)
+    betting_state = runtime_context.betting_state
+    betting_state["dynamic_outcome"] = outcome
+    betting_state["dynamic_specifier"] = specifier
+    betting_state["dynamic_targets"] = dynamic_targets
+    betting_state["dynamic_color_counts"] = dynamic_color_counts
+
+
+def get_best_combinations(
+    *,
+    stats: dict | None,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
+    analyze_all_results_frequency_func,
+) -> tuple[tuple[BetTarget, ...], dict[str, int]]:
+    """Выбрать N комбинаций (N=len(BET_TARGETS)) для multi-target dynamic режима.
+
+    Returns:
+        tuple[tuple[BetTarget, ...], dict[str, int]]: Кортеж из двух элементов:
+            - выбранные цели ставок (`BetTarget`) в порядке итогового отбора для
+              динамического multi-target режима;
+            - словарь с количеством выбранных целей по типам/цветам (`red`,
+              `yellow`, `double`), который используется для контроля и анализа
+              сохранения цветового соотношения в итоговом наборе.
+    """
+    configured_targets = runtime_context.get_configured_bet_targets()
+    target_count = len(configured_targets)
+    if target_count <= 0:
+        return tuple(), {"red": 0, "yellow": 0, "double": 0}
+
+    dynamic_config = runtime_config.dynamic_betting
+    if stats is None:
+        stats = analyze_all_results_frequency_func()
+    if not stats:
+        return tuple(), {"red": 0, "yellow": 0, "double": 0}
+
+    selectable_stats = dict(stats)
+    if not dynamic_config.include_double_selection:
+        selectable_stats.pop("double", None)
+    if not selectable_stats:
+        return tuple(), {"red": 0, "yellow": 0, "double": 0}
+
+    ranked_keys = [
+        combo_key
+        for combo_key, _ in sorted(selectable_stats.items(), key=_stats_sort_key, reverse=True)
+        if _combo_to_target(combo_key) is not None
+    ]
+    if not ranked_keys:
+        return tuple(), {"red": 0, "yellow": 0, "double": 0}
+
+    selected_keys: list[str] = []
+    if dynamic_config.preserve_color_ratio and target_count > 1:
+        required_color_counts = _build_configured_color_counts(configured_targets)
+        for color_key in ("red", "yellow", "double"):
+            required_count = required_color_counts.get(color_key, 0)
+            if required_count <= 0:
+                continue
+            color_candidates = [combo_key for combo_key in ranked_keys if _combo_color_key(combo_key) == color_key]
+            for combo_key in color_candidates[:required_count]:
+                if combo_key not in selected_keys:
+                    selected_keys.append(combo_key)
+
+    for combo_key in ranked_keys:
+        if len(selected_keys) >= target_count:
+            break
+        if combo_key in selected_keys:
+            continue
+        selected_keys.append(combo_key)
+
+    selected_targets: list[BetTarget] = []
+    for combo_key in selected_keys[:target_count]:
+        target = _combo_to_target(combo_key)
+        if target is not None:
+            selected_targets.append(target)
+
+    selected_color_counts = _build_configured_color_counts(tuple(selected_targets))
+    return tuple(selected_targets), selected_color_counts
+
+
 def get_best_combination(
     *,
     stats: dict | None,
@@ -241,32 +381,108 @@ def update_dynamic_bet(
     bet_debug_enabled = runtime_config.betting.debug_enabled
     color_cyan = runtime_config.colors.cyan
     color_reset = runtime_config.colors.reset
+    configured_targets = runtime_context.get_configured_bet_targets()
+    multi_target_mode = len(configured_targets) > 1
+    dynamic_multi_effective = multi_target_mode and dynamic_config.multi_target_enabled
 
     if bet_debug_enabled:
-        print(f"[DEBUG UPDATE_DYN] Function entered. DYNAMIC_BET_MODE={dynamic_config.enabled}", flush=True)
+        print(
+            "[DEBUG UPDATE_DYN] Function entered. "
+            f"DYNAMIC_BET_MODE={dynamic_config.enabled}, "
+            f"MULTI_TARGET_MODE={multi_target_mode}, "
+            f"DYNAMIC_MULTI_TARGET_ENABLED={dynamic_config.multi_target_enabled}",
+            flush=True,
+        )
 
     if not dynamic_config.enabled:
         if bet_debug_enabled:
             print("[DEBUG UPDATE_DYN] Early return: DYNAMIC_BET_MODE is False", flush=True)
         return current_outcome, current_specifier
 
-    total_bets = betting_state.get("total_bets_placed", 0)
-    next_trigger = ((total_bets // dynamic_config.recalc_interval) + 1) * dynamic_config.recalc_interval
-    if bet_debug_enabled:
-        modulo_result = total_bets % dynamic_config.recalc_interval if dynamic_config.recalc_interval > 0 else "ERROR"
-        print(f"[DEBUG UPDATE_DYN] total_bets={total_bets}, DYNAMIC_RECALC_INTERVAL={dynamic_config.recalc_interval}, modulo result={modulo_result}, next trigger at {next_trigger}", flush=True)
+    if multi_target_mode and not dynamic_multi_effective:
+        if bet_debug_enabled:
+            print("[DEBUG UPDATE_DYN] Multi-target active, but dynamic multi-target mode is disabled.", flush=True)
+        return current_outcome, current_specifier
 
-    if not (total_bets > 0 and total_bets % dynamic_config.recalc_interval == 0):
+    total_bet_rounds = betting_state.get("total_bet_rounds", 0)
+    total_bets_placed = betting_state.get("total_bets_placed", 0)
+    step_counter = total_bet_rounds if total_bet_rounds > 0 else total_bets_placed
+    step_counter_name = "total_bet_rounds" if total_bet_rounds > 0 else "total_bets_placed"
+
+    next_trigger = ((step_counter // dynamic_config.recalc_interval) + 1) * dynamic_config.recalc_interval
+    if bet_debug_enabled:
+        modulo_result = step_counter % dynamic_config.recalc_interval if dynamic_config.recalc_interval > 0 else "ERROR"
+        print(
+            f"[DEBUG UPDATE_DYN] recalc_counter={step_counter_name}:{step_counter}, "
+            f"DYNAMIC_RECALC_INTERVAL={dynamic_config.recalc_interval}, modulo result={modulo_result}, next trigger at {next_trigger}",
+            flush=True,
+        )
+
+    if not (step_counter > 0 and step_counter % dynamic_config.recalc_interval == 0):
         return current_outcome, current_specifier
 
     stats = analyze_all_results_frequency_func()
     if bet_debug_enabled:
-        print(f"[DEBUG DYNAMIC] Проверка на ходу {total_bets}: results_window={dynamic_config.window_size}, interval={dynamic_config.recalc_interval}, analyzed_combos={len(stats)}", flush=True)
+        print(f"[DEBUG DYNAMIC] Проверка на ходу {step_counter}: results_window={dynamic_config.window_size}, interval={dynamic_config.recalc_interval}, analyzed_combos={len(stats)}", flush=True)
 
     if not stats:
         if bet_debug_enabled:
             print("[DEBUG DYNAMIC] Нет данных game_results для анализа, пропускаем обновление", flush=True)
         return current_outcome, current_specifier
+
+    if dynamic_multi_effective:
+        selected_targets, selected_color_counts = get_best_combinations(
+            stats=stats,
+            runtime_context=runtime_context,
+            runtime_config=runtime_config,
+            analyze_all_results_frequency_func=analyze_all_results_frequency_func,
+        )
+
+        if not selected_targets:
+            if bet_debug_enabled:
+                print("[DEBUG DYNAMIC] Не удалось выбрать dynamic multi-target цели, пропускаем обновление", flush=True)
+            return current_outcome, current_specifier
+
+        selected_tokens = [target.token for target in selected_targets]
+        previous_tokens = list(betting_state.get("dynamic_targets") or [])
+        changed = previous_tokens != selected_tokens
+
+        lead_target = selected_targets[0]
+        lead_specifier = lead_target.specifier or "5"
+        _apply_dynamic_runtime_state(
+            runtime_context=runtime_context,
+            outcome=lead_target.outcome,
+            specifier=lead_specifier,
+            dynamic_targets=selected_tokens,
+            dynamic_color_counts=selected_color_counts,
+        )
+
+        if changed:
+            print(f"\n{color_cyan}📊 ДИНАМИЧЕСКОЕ ОБНОВЛЕНИЕ MULTI-TARGET (ход {step_counter}):{color_reset}", flush=True)
+            sorted_stats = sorted(stats.items(), key=lambda item: item[1]["frequency"], reverse=True)
+            for index, (combo, data) in enumerate(sorted_stats[:5], 1):
+                display_combo = format_combo_pretty_func(combo)
+                print(f"  {index}. {display_combo:20} выпал {data['freq']:2d} раз ({data['frequency']:5.1f}%)", flush=True)
+
+            selected_pretty = ", ".join(format_outcome_pretty_func(target.outcome, target.specifier) for target in selected_targets)
+            print(f"  ➜ Выбраны: {selected_pretty}", flush=True)
+            print(
+                "  ➜ Цветовой состав: "
+                f"red={selected_color_counts['red']}, yellow={selected_color_counts['yellow']}, double={selected_color_counts['double']}",
+                flush=True,
+            )
+            print("", flush=True)
+        elif dynamic_config.unchanged_analysis_output_enabled:
+            print(f"\n{color_cyan}📊 АНАЛИЗ DYNAMIC MULTI-TARGET (ход {step_counter}):{color_reset}", flush=True)
+            print(f"  Текущие цели: {', '.join(selected_tokens)}", flush=True)
+            print(
+                "  Цветовой состав: "
+                f"red={selected_color_counts['red']}, yellow={selected_color_counts['yellow']}, double={selected_color_counts['double']}",
+                flush=True,
+            )
+            print("", flush=True)
+
+        return runtime_context.get_current_bet_target()
 
     best_outcome, best_specifier = get_best_combination_func(stats)
     old_outcome = current_outcome
@@ -275,14 +491,22 @@ def update_dynamic_bet(
     if best_outcome != current_outcome or best_specifier != current_specifier:
         current_outcome = best_outcome
         current_specifier = best_specifier if best_specifier else "5"
-        runtime_context.set_current_bet_target(current_outcome, current_specifier)
-        betting_state["dynamic_outcome"] = current_outcome
-        betting_state["dynamic_specifier"] = current_specifier
+        _apply_dynamic_runtime_state(
+            runtime_context=runtime_context,
+            outcome=current_outcome,
+            specifier=current_specifier,
+            dynamic_targets=["D" if current_outcome == "double" else f"{'R' if current_outcome == 'red' else 'Y'}{current_specifier}"],
+            dynamic_color_counts={
+                "red": 1 if current_outcome == "red" else 0,
+                "yellow": 1 if current_outcome == "yellow" else 0,
+                "double": 1 if current_outcome == "double" else 0,
+            },
+        )
 
         if bet_debug_enabled:
             print(f"[DEBUG DYNAMIC] ✅ СМЕНА: {format_outcome_pretty_func(old_outcome, old_specifier)} → {format_outcome_pretty_func(current_outcome, current_specifier)}", flush=True)
 
-        print(f"\n{color_cyan}📊 ДИНАМИЧЕСКОЕ ОБНОВЛЕНИЕ СТАВКИ (ход {total_bets}):{color_reset}", flush=True)
+        print(f"\n{color_cyan}📊 ДИНАМИЧЕСКОЕ ОБНОВЛЕНИЕ СТАВКИ (ход {step_counter}):{color_reset}", flush=True)
         sorted_stats = sorted(stats.items(), key=lambda item: item[1]["frequency"], reverse=True)
         for index, (combo, data) in enumerate(sorted_stats[:3], 1):
             display_combo = format_combo_pretty_func(combo)
@@ -296,10 +520,22 @@ def update_dynamic_bet(
     if bet_debug_enabled:
         print(f"[DEBUG DYNAMIC] Ставка не изменилась: {current_outcome if current_outcome == 'double' else f'{current_outcome}({current_specifier})'} оптимальна", flush=True)
 
+    _apply_dynamic_runtime_state(
+        runtime_context=runtime_context,
+        outcome=current_outcome,
+        specifier=current_specifier,
+        dynamic_targets=["D" if current_outcome == "double" else f"{'R' if current_outcome == 'red' else 'Y'}{current_specifier}"],
+        dynamic_color_counts={
+            "red": 1 if current_outcome == "red" else 0,
+            "yellow": 1 if current_outcome == "yellow" else 0,
+            "double": 1 if current_outcome == "double" else 0,
+        },
+    )
+
     if not dynamic_config.unchanged_analysis_output_enabled:
         return current_outcome, current_specifier
 
-    print(f"\n{color_cyan}📊 АНАЛИЗ ДИНАМИЧЕСКОЙ СТАВКИ (ход {total_bets}):{color_reset}", flush=True)
+    print(f"\n{color_cyan}📊 АНАЛИЗ ДИНАМИЧЕСКОЙ СТАВКИ (ход {step_counter}):{color_reset}", flush=True)
     sorted_stats = sorted(stats.items(), key=lambda item: item[1]["frequency"], reverse=True)
     for index, (combo, data) in enumerate(sorted_stats[:5], 1):
         display_combo = format_combo_pretty_func(combo)

@@ -24,7 +24,9 @@ def build_runtime_snapshot(
     current_strategy = runtime_context.current_strategy
     betting_enabled = runtime_config.betting.enabled
     multi_bet_enabled = len(runtime_context.get_configured_bet_targets()) > 1 if betting_enabled else False
-    dynamic_bet_mode = betting_enabled and runtime_config.dynamic_betting.enabled and not multi_bet_enabled
+    dynamic_bet_mode = betting_enabled and runtime_config.dynamic_betting.enabled and (
+        not multi_bet_enabled or runtime_config.dynamic_betting.multi_target_enabled
+    )
     strategy_name_value = runtime_config.betting.strategy_name if runtime_config.betting.enabled else None
     strategy_display_name = current_strategy.get("name") if current_strategy else None
     max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else None
@@ -83,10 +85,14 @@ def build_runtime_snapshot(
         "dynamic_include_double_selection": runtime_config.dynamic_betting.include_double_selection if betting_enabled else False,
         "dynamic_filter_by_player": runtime_config.dynamic_betting.filter_by_player if betting_enabled else False,
         "dynamic_filter_by_side": runtime_config.dynamic_betting.filter_by_side if betting_enabled else False,
+        "dynamic_multi_target_enabled": runtime_config.dynamic_betting.multi_target_enabled if betting_enabled else False,
+        "dynamic_preserve_color_ratio": runtime_config.dynamic_betting.preserve_color_ratio if betting_enabled else False,
         "last_bet_amount": betting_state.get("last_bet_amount") if betting_state else 0.0,
         "last_set_amount": betting_state.get("last_set_amount") if betting_state else 0.0,
         "last_set_status": betting_state.get("last_set_status") if betting_state else None,
         "last_set_error": betting_state.get("last_set_error") if betting_state else None,
+        "dynamic_targets": betting_state.get("dynamic_targets", []) if betting_enabled and betting_state else [],
+        "dynamic_color_counts": betting_state.get("dynamic_color_counts", {"red": 0, "yellow": 0, "double": 0}) if betting_enabled and betting_state else {"red": 0, "yellow": 0, "double": 0},
         "last_round_result": betting_state.get("last_round_result") if betting_state else None,
         "last_round_game_id": betting_state.get("last_round_game_id") if betting_state else None,
         "last_round_status": betting_state.get("last_round_status") if betting_state else None,

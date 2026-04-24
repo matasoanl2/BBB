@@ -83,6 +83,8 @@ class RuntimeBettingState:
     pending_bets: list[dict[str, Any]] = field(default_factory=list)
     dynamic_outcome: str = "red"
     dynamic_specifier: str = "5"
+    dynamic_targets: list[str] = field(default_factory=list)
+    dynamic_color_counts: dict[str, int] = field(default_factory=lambda: {"red": 0, "yellow": 0, "double": 0})
     strategy: dict[str, Any] | None = None
     reconciliation: ReconciliationState = field(default_factory=ReconciliationState)
     processed_round_game_ids: deque[str] = field(default_factory=lambda: deque(maxlen=512))

@@ -29,7 +29,7 @@ def print_strategy_startup_info(
     current_strategy = runtime_context.current_strategy
     dynamic_config = runtime_config.dynamic_betting
     multi_bet_enabled = len(runtime_context.get_configured_bet_targets()) > 1
-    dynamic_mode_effective = dynamic_config.enabled and not multi_bet_enabled
+    dynamic_mode_effective = dynamic_config.enabled and (not multi_bet_enabled or dynamic_config.multi_target_enabled)
     base_bet = runtime_config.betting.base_bet
     print(f"[STRATEGY] Загружена стратегия: {current_strategy['name']}", flush=True)
     print(f"[STRATEGY] Описание: {current_strategy['description']}", flush=True)
@@ -41,13 +41,15 @@ def print_strategy_startup_info(
         bet_amount = base_bet * coeff
         print(f"  Step {index+1}: {base_bet}р × {coeff} = {bet_amount}р ✓", flush=True)
 
-    if dynamic_config.enabled and multi_bet_enabled:
-        print("[DYNAMIC] Задано несколько целей BET_TARGETS, динамический режим проигнорирован", flush=True)
+    if dynamic_config.enabled and multi_bet_enabled and not dynamic_config.multi_target_enabled:
+        print("[DYNAMIC] Задано несколько целей BET_TARGETS, dynamic multi-target отключен", flush=True)
 
     if dynamic_mode_effective:
         print("\n[DYNAMIC] 🔄 ДИНАМИЧЕСКИЙ РЕЖИМ ВКЛЮЧЕН", flush=True)
         print(f"[DYNAMIC] Окно анализа: {dynamic_config.window_size} ставок", flush=True)
         print(f"[DYNAMIC] Пересчет: каждые {dynamic_config.recalc_interval} ставок", flush=True)
+        print(f"[DYNAMIC] Multi-target: {'ON' if dynamic_config.multi_target_enabled else 'OFF'}", flush=True)
+        print(f"[DYNAMIC] Сохранять цветовой состав: {'ON' if dynamic_config.preserve_color_ratio else 'OFF'}", flush=True)
         print(f"[DYNAMIC] Выбор по среднему значению: {'ON' if dynamic_config.use_average_value_selection else 'OFF'}", flush=True)
         print(f"[DYNAMIC] Учитывать double: {'ON' if dynamic_config.include_double_selection else 'OFF'}", flush=True)
         print(f"[DYNAMIC] Фильтр по игроку: {'ON' if dynamic_config.filter_by_player else 'OFF'}", flush=True)

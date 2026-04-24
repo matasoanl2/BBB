@@ -64,9 +64,13 @@ class RuntimeApp:
             print("[ERROR] Не удалось определить ни одной цели ставки.", flush=True)
             sys.exit(1)
 
-        if self.runtime_config.dynamic_betting.enabled and len(configured_targets) > 1:
+        if (
+            self.runtime_config.dynamic_betting.enabled
+            and len(configured_targets) > 1
+            and not self.runtime_config.dynamic_betting.multi_target_enabled
+        ):
             print(
-                "[WARNING] Задано несколько целей в BET_TARGETS, поэтому DYNAMIC_BET_MODE будет проигнорирован для этого запуска.",
+                "[WARNING] Задано несколько целей в BET_TARGETS: dynamic-пересчет multi-target отключен (DYNAMIC_MULTI_TARGET_ENABLED=0).",
                 flush=True,
             )
 

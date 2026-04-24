@@ -795,7 +795,11 @@ async def process_betting_round(
 ) -> None:
     betting_state = runtime_context.betting_state
     current_strategy = runtime_context.current_strategy
-    dynamic_bet_mode = runtime_config.dynamic_betting.enabled and len(runtime_context.get_configured_bet_targets()) <= 1
+    configured_targets = runtime_context.get_configured_bet_targets()
+    multi_target_mode = len(configured_targets) > 1
+    dynamic_bet_mode = runtime_config.dynamic_betting.enabled and (
+        not multi_target_mode or runtime_config.dynamic_betting.multi_target_enabled
+    )
     bet_debug_enabled = runtime_config.betting.debug_enabled
     try:
         payload_text = format_ws_payload_func(payload)
@@ -970,10 +974,31 @@ async def process_betting_round(
     
     bet_targets_to_place: tuple[BetTarget, ...]
     if dynamic_bet_mode:
-        current_outcome, current_specifier = runtime_context.get_current_bet_target()
-        bet_targets_to_place = (BetTarget(outcome=current_outcome, specifier="" if current_outcome == "double" else current_specifier),)
+        if multi_target_mode:
+            dynamic_target_tokens = list(betting_state.get("dynamic_targets") or [])
+            resolved_dynamic_targets: list[BetTarget] = []
+            for token in dynamic_target_tokens:
+                token_text = str(token).strip().upper()
+                if token_text == "D":
+                    resolved_dynamic_targets.append(BetTarget(outcome="double", specifier=""))
+                    continue
+                if len(token_text) == 2 and token_text[0] in {"R", "Y"} and token_text[1] in {"1", "2", "3", "4", "5", "6"}:
+                    resolved_dynamic_targets.append(
+                        BetTarget(
+                            outcome="red" if token_text[0] == "R" else "yellow",
+                            specifier=token_text[1],
+                        )
+                    )
+
+            if resolved_dynamic_targets:
+                bet_targets_to_place = tuple(resolved_dynamic_targets)
+            else:
+                bet_targets_to_place = configured_targets
+        else:
+            current_outcome, current_specifier = runtime_context.get_current_bet_target()
+            bet_targets_to_place = (BetTarget(outcome=current_outcome, specifier="" if current_outcome == "double" else current_specifier),)
     else:
-        bet_targets_to_place = runtime_context.get_configured_bet_targets()
+        bet_targets_to_place = configured_targets
 
     consecutive_losses = betting_state.get("consecutive_losses", 0)
     random_fallback_enabled = runtime_config.dynamic_betting.random_fallback_enabled
