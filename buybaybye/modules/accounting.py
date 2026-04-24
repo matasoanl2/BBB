@@ -302,6 +302,7 @@ async def monitor_accounting_ws_health(
             continue
 
         ws_age = get_accounting_age_seconds_func("last_accounting_ws_message_at")
+        ws_open_age = get_accounting_age_seconds_func("last_accounting_ws_opened_at")
         balance_age = get_accounting_age_seconds_func("account_balance_updated_at")
 
         reason = None
@@ -316,6 +317,12 @@ async def monitor_accounting_ws_health(
             and float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0) > 0
         ):
             reason = f"no accounting messages for {ws_age:.0f}s"
+        elif betting_state.get("accounting_ws_connected"):
+            idle_threshold = runtime_config.accounting.idle_reconnect_seconds
+            if ws_age is not None and ws_age >= idle_threshold:
+                reason = f"accounting_ws idle for {ws_age:.0f}s"
+            elif ws_age is None and ws_open_age is not None and ws_open_age >= idle_threshold:
+                reason = f"accounting_ws connected without messages for {ws_open_age:.0f}s"
 
         if reason:
             await reload_page_for_accounting_recovery_func(page, reason)

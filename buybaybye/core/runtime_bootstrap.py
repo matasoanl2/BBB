@@ -104,6 +104,7 @@ def build_runtime_status_line(
         status_line += "🎲 РЕЖИМ СТАВОК ПРИНУДИТЕЛЬНО ОТКЛЮЧЕН ДЛЯ ТЕКУЩЕЙ РОЛИ\n"
     status_line += f"  - Accounting stale timeout: {runtime_config.accounting.balance_stale_seconds:.0f}с\n"
     status_line += f"  - Accounting recovery reload: {runtime_config.accounting.recovery_reload_seconds:.0f}с\n"
+    status_line += f"  - Accounting idle reconnect: {runtime_config.accounting.idle_reconnect_seconds:.0f}с\n"
     if runtime_config.role.uses_persistent_browser_profile:
         status_line += "Закройте окно браузера или нажмите Enter здесь - сессия сохранится."
     else:

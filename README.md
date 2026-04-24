@@ -63,6 +63,15 @@
 - `COLOR_ENABLED` — цветной вывод (по умолчанию true)
 - `LOG_LEVEL`, `LOG_TO_FILE` — управление логированием
 
+**Accounting recovery таймауты:**
+- `ACCOUNTING_BALANCE_STALE_SECONDS` — через сколько секунд баланс считается устаревшим в сценариях с неподтвержденным списанием ставки
+- `ACCOUNTING_RECOVERY_RELOAD_SECONDS` — порог запуска recovery при stale-состоянии (например, нет ожидаемого обновления баланса)
+- `ACCOUNTING_IDLE_RECONNECT_SECONDS` — порог принудительного reconnect при «тихом» accounting_ws (соединение есть, но долго нет сообщений)
+- `ACCOUNTING_RECOVERY_COOLDOWN_SECONDS` — минимальный интервал между попытками recovery
+- `ACCOUNTING_MONITOR_POLL_SECONDS` — частота проверки здоровья accounting_ws
+
+Практически: `ACCOUNTING_RECOVERY_RELOAD_SECONDS` покрывает stale-сценарии, а `ACCOUNTING_IDLE_RECONNECT_SECONDS` — длительный простой канала даже без нового `balance_update`.
+
 ## 🔧 Компоненты проекта
 
 ### dashboard.py / dashboard/app.py — веб-дашборд поверх PostgreSQL
