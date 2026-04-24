@@ -310,7 +310,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             include_double_selection=_env_bool("DYNAMIC_INCLUDE_DOUBLE_SELECTION", "true"),
             filter_by_player=_env_bool("DYNAMIC_FILTER_BY_PLAYER"),
             filter_by_side=_env_bool("DYNAMIC_FILTER_BY_SIDE"),
-            random_fallback_enabled=_env_bool("DYNAMIC_RANDOM_FALLBACK_ENABLED", "true"),
+            random_fallback_enabled=_env_bool("DYNAMIC_RANDOM_FALLBACK_ENABLED", "false"),
             random_fallback_loss_streak=max(1, int(os.getenv("DYNAMIC_RANDOM_FALLBACK_LOSS_STREAK", "15"))),
             multi_target_enabled=_env_bool("DYNAMIC_MULTI_TARGET_ENABLED"),
             preserve_color_ratio=_env_bool("DYNAMIC_PRESERVE_COLOR_RATIO"),

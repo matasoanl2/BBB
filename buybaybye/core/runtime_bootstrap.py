@@ -45,6 +45,17 @@ def print_strategy_startup_info(
         print("[DYNAMIC] Задано несколько целей BET_TARGETS, dynamic multi-target отключен", flush=True)
 
     if dynamic_mode_effective:
+        configured_targets = runtime_context.get_configured_bet_targets()
+        if configured_targets:
+            initial_bet_targets = ", ".join(
+                format_outcome_pretty_func(target.outcome, target.specifier)
+                for target in configured_targets
+            )
+        else:
+            initial_outcome = runtime_context.bet_mode_outcome
+            initial_specifier = runtime_context.bet_mode_specifier
+            initial_bet_targets = format_outcome_pretty_func(initial_outcome, initial_specifier)
+
         print("\n[DYNAMIC] 🔄 ДИНАМИЧЕСКИЙ РЕЖИМ ВКЛЮЧЕН", flush=True)
         print(f"[DYNAMIC] Окно анализа: {dynamic_config.window_size} ставок", flush=True)
         print(f"[DYNAMIC] Пересчет: каждые {dynamic_config.recalc_interval} ставок", flush=True)
@@ -54,7 +65,7 @@ def print_strategy_startup_info(
         print(f"[DYNAMIC] Учитывать double: {'ON' if dynamic_config.include_double_selection else 'OFF'}", flush=True)
         print(f"[DYNAMIC] Фильтр по игроку: {'ON' if dynamic_config.filter_by_player else 'OFF'}", flush=True)
         print(f"[DYNAMIC] Фильтр по стороне: {'ON' if dynamic_config.filter_by_side else 'OFF'}", flush=True)
-        print(f"[DYNAMIC] Начальная ставка: {format_outcome_pretty_func(runtime_context.bet_mode_outcome, runtime_context.bet_mode_specifier)}", flush=True)
+        print(f"[DYNAMIC] Начальная ставка: {initial_bet_targets}", flush=True)
 
 
 def get_browser_launch_args() -> list[str]:

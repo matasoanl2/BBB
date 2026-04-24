@@ -12,6 +12,7 @@ from buybaybye.core.runtime_config import (
     RuntimeConfig,
     RuntimeRoleConfig,
     TelegramConfig,
+    load_runtime_config,
     validate_runtime_config,
 )
 from buybaybye.core.runtime_config import DatabaseConfig
@@ -47,3 +48,11 @@ def test_validate_runtime_config_rejects_zero_recalc_interval() -> None:
     config.dynamic_betting.recalc_interval = 0
     with pytest.raises(ValueError):
         validate_runtime_config(config)
+
+
+def test_load_runtime_config_random_fallback_disabled_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DYNAMIC_RANDOM_FALLBACK_ENABLED", raising=False)
+
+    config = load_runtime_config(Path("."))
+
+    assert config.dynamic_betting.random_fallback_enabled is False
