@@ -317,6 +317,13 @@ async def monitor_accounting_ws_health(
             and float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0) > 0
         ):
             reason = f"no accounting messages for {ws_age:.0f}s"
+        elif (
+            betting_state.get("accounting_ws_connected")
+            and betting_state.get("account_balance") is None
+            and ws_open_age is not None
+            and ws_open_age >= runtime_config.accounting.initial_balance_timeout_seconds
+        ):
+            reason = f"initial balance_update missing for {ws_open_age:.0f}s"
         elif betting_state.get("accounting_ws_connected"):
             idle_threshold = runtime_config.accounting.idle_reconnect_seconds
             if ws_age is not None and ws_age >= idle_threshold:

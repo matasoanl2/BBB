@@ -133,6 +133,7 @@ class DynamicBettingConfig:
 @dataclass(slots=True)
 class AccountingConfig:
     balance_stale_seconds: float
+    initial_balance_timeout_seconds: float
     recovery_reload_seconds: float
     recovery_cooldown_seconds: float
     idle_reconnect_seconds: float
@@ -205,6 +206,8 @@ def validate_runtime_config(config: RuntimeConfig) -> None:
         raise ValueError("[ERROR] DYNAMIC_RANDOM_FALLBACK_LOSS_STREAK должен быть больше 0.")
     if config.accounting.balance_stale_seconds <= 0:
         raise ValueError("[ERROR] ACCOUNTING_BALANCE_STALE_SECONDS должен быть больше 0.")
+    if config.accounting.initial_balance_timeout_seconds <= 0:
+        raise ValueError("[ERROR] ACCOUNTING_INITIAL_BALANCE_TIMEOUT_SECONDS должен быть больше 0.")
     if config.accounting.recovery_reload_seconds <= 0:
         raise ValueError("[ERROR] ACCOUNTING_RECOVERY_RELOAD_SECONDS должен быть больше 0.")
     if config.accounting.recovery_cooldown_seconds < 0:
@@ -317,6 +320,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
         ),
         accounting=AccountingConfig(
             balance_stale_seconds=float(os.getenv("ACCOUNTING_BALANCE_STALE_SECONDS", "15")),
+            initial_balance_timeout_seconds=float(os.getenv("ACCOUNTING_INITIAL_BALANCE_TIMEOUT_SECONDS", "20")),
             recovery_reload_seconds=float(os.getenv("ACCOUNTING_RECOVERY_RELOAD_SECONDS", "25")),
             recovery_cooldown_seconds=float(os.getenv("ACCOUNTING_RECOVERY_COOLDOWN_SECONDS", "30")),
             idle_reconnect_seconds=float(os.getenv("ACCOUNTING_IDLE_RECONNECT_SECONDS", "300")),
