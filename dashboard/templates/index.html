@@ -928,6 +928,16 @@
             balanceSeries: [],
         };
 
+        const lastDataState = {
+            snapshot: null,
+            summary: null,
+            recentBets: [],
+            recentRounds: [],
+            recentEvents: [],
+            balanceSeries: [],
+            resultCurve: [],
+        };
+
         const fmtMoney = (value) => {
             if (value === null || value === undefined || value === "") return "-";
             const number = Number(value);
@@ -1089,6 +1099,70 @@
                 .replaceAll(">", "&gt;")
                 .replaceAll('"', "&quot;")
                 .replaceAll("'", "&#39;");
+        }
+
+        function hasMeaningfulSnapshot(snapshot) {
+            if (!snapshot || typeof snapshot !== "object") return false;
+
+            if (snapshot.updated_at || snapshot.strategy_display_name || snapshot.last_set_status || snapshot.last_round_result) {
+                return true;
+            }
+
+            if (Array.isArray(snapshot.configured_targets) && snapshot.configured_targets.length > 0) {
+                return true;
+            }
+
+            return false;
+        }
+
+        function hasMeaningfulSummary(summary) {
+            if (!summary || typeof summary !== "object") return false;
+
+            if (summary.step_label || summary.reconciliation_phase || summary.freshness_state) {
+                return true;
+            }
+
+            const numericKeys = [
+                "all_time_bets",
+                "all_time_rounds",
+                "wins",
+                "losses",
+                "session_total_bets",
+                "account_balance",
+                "withdrawals_total",
+            ];
+
+            return numericKeys.some((key) => {
+                const value = summary[key];
+                return value !== null && value !== undefined && value !== "" && Number(value) !== 0;
+            });
+        }
+
+        function getLatestSnapshot(snapshot) {
+            if (hasMeaningfulSnapshot(snapshot)) {
+                lastDataState.snapshot = snapshot;
+                return snapshot;
+            }
+
+            return lastDataState.snapshot || snapshot || {};
+        }
+
+        function getLatestSummary(summary) {
+            if (hasMeaningfulSummary(summary)) {
+                lastDataState.summary = summary;
+                return summary;
+            }
+
+            return lastDataState.summary || summary || {};
+        }
+
+        function getLatestArray(items, key) {
+            if (Array.isArray(items) && items.length > 0) {
+                lastDataState[key] = items;
+                return items;
+            }
+
+            return lastDataState[key] || [];
         }
 
         function renderAlert(message, kind = "warn") {
@@ -1260,17 +1334,21 @@
             `).join("");
         }
 
-        function makePathFromSeries(series, width, height, accessor, minValue, maxValue) {
+        function makePathFromSeries(series, width, height, accessor, minValue, maxValue, padding) {
             if (!series.length) return "";
             const span = Math.max(maxValue - minValue, 1);
             const commands = [];
+            const plotWidth = width - padding.left - padding.right;
+            const plotHeight = height - padding.top - padding.bottom;
             series.forEach((entry, index) => {
                 const point = accessor(entry);
                 if (point === null || point === undefined || Number.isNaN(Number(point))) {
                     return;
                 }
-                const x = series.length === 1 ? width / 2 : (index / (series.length - 1)) * width;
-                const y = height - ((Number(point) - minValue) / span) * height;
+                const x = series.length === 1
+                    ? padding.left + plotWidth / 2
+                    : padding.left + (index / (series.length - 1)) * plotWidth;
+                const y = padding.top + (1 - ((Number(point) - minValue) / span)) * plotHeight;
                 commands.push(`${commands.length === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`);
             });
             return commands.join(" ");
@@ -1288,67 +1366,43 @@
             return !toggle || toggle.checked;
         }
 
-        function getBalanceLabelIndices(series) {
-            const validPoints = [];
-
-            series.forEach((entry, index) => {
-                const value = entry.session_balance;
-                if (value === null || value === undefined || Number.isNaN(Number(value))) {
-                    return;
-                }
-                validPoints.push({ index, value: Number(value) });
-            });
-
-            if (!validPoints.length) return new Set();
-
-            let minPoint = validPoints[0];
-            let maxPoint = validPoints[0];
-            const lastPoint = validPoints[validPoints.length - 1];
-
-            for (const point of validPoints) {
-                if (point.value < minPoint.value) minPoint = point;
-                if (point.value > maxPoint.value) maxPoint = point;
-            }
-
-            return new Set([lastPoint.index, minPoint.index, maxPoint.index]);
-        }
-
-        function buildBalanceMarkers(series, width, height, minValue, maxValue) {
+        function buildBalanceAxes(series, width, height, minValue, maxValue, padding) {
             if (!series.length) return "";
 
-            const span = Math.max(maxValue - minValue, 1);
-            const labelIndices = getBalanceLabelIndices(series);
-            let markers = "";
+            const plotWidth = width - padding.left - padding.right;
+            const plotHeight = height - padding.top - padding.bottom;
+            const yTicks = [maxValue, minValue + ((maxValue - minValue) / 2), minValue];
+            const xTickIndices = Array.from(new Set([
+                0,
+                Math.max(0, Math.floor((series.length - 1) / 2)),
+                Math.max(0, series.length - 1),
+            ]));
 
-            series.forEach((entry, index) => {
-                const shouldLabel = labelIndices.has(index);
-                const sessionValue = entry.session_balance;
-                if (!shouldLabel || sessionValue === null || sessionValue === undefined || Number.isNaN(Number(sessionValue))) {
-                    return;
-                }
-
-                const x = series.length === 1 ? width / 2 : (index / (series.length - 1)) * width;
-                const y = height - ((Number(sessionValue) - minValue) / span) * height;
-                const timeLabel = formatChartTime(entry.timestamp);
-                const sessionLabel = `${Math.round(Number(sessionValue))}р`;
-                const realValue = entry.account_balance;
-                const realLabel = realValue === null || realValue === undefined || Number.isNaN(Number(realValue))
-                    ? "-"
-                    : `${Math.round(Number(realValue))}р`;
-                const text = `${timeLabel} | S:${sessionLabel} | R:${realLabel}`;
-
-                const nearRightEdge = x > width - 180;
-                const textAnchor = nearRightEdge ? "end" : "start";
-                const textX = nearRightEdge ? x - 8 : x + 8;
-                const textY = Math.max(14, y - 10);
-
-                markers += `
-                    <circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3.8" fill="#1f7a4d" stroke="#ffffff" stroke-width="1.2"></circle>
-                    <text x="${textX.toFixed(2)}" y="${textY.toFixed(2)}" text-anchor="${textAnchor}" fill="#394333" font-size="11" font-weight="700">${text}</text>
+            const yAxisLabels = yTicks.map((value) => {
+                const normalized = (Number(value) - minValue) / Math.max(maxValue - minValue, 1);
+                const y = padding.top + (1 - normalized) * plotHeight;
+                return `
+                    <line x1="${padding.left}" y1="${y.toFixed(2)}" x2="${(width - padding.right).toFixed(2)}" y2="${y.toFixed(2)}" stroke="rgba(32,37,29,0.08)" stroke-width="1"></line>
+                    <text x="${(padding.left - 8).toFixed(2)}" y="${(y + 4).toFixed(2)}" text-anchor="end" fill="#667062" font-size="11" font-weight="700">${Math.round(Number(value))}р</text>
                 `;
-            });
+            }).join("");
 
-            return markers;
+            const xAxisLabels = xTickIndices.map((index) => {
+                const x = series.length === 1
+                    ? padding.left + plotWidth / 2
+                    : padding.left + (index / (series.length - 1)) * plotWidth;
+                return `
+                    <line x1="${x.toFixed(2)}" y1="${padding.top}" x2="${x.toFixed(2)}" y2="${(height - padding.bottom).toFixed(2)}" stroke="rgba(32,37,29,0.06)" stroke-width="1"></line>
+                    <text x="${x.toFixed(2)}" y="${(height - 8).toFixed(2)}" text-anchor="middle" fill="#667062" font-size="11" font-weight="700">${formatChartTime(series[index]?.timestamp)}</text>
+                `;
+            }).join("");
+
+            return `
+                <line x1="${padding.left}" y1="${padding.top}" x2="${padding.left}" y2="${(height - padding.bottom).toFixed(2)}" stroke="rgba(32,37,29,0.14)" stroke-width="1.2"></line>
+                <line x1="${padding.left}" y1="${(height - padding.bottom).toFixed(2)}" x2="${(width - padding.right).toFixed(2)}" y2="${(height - padding.bottom).toFixed(2)}" stroke="rgba(32,37,29,0.14)" stroke-width="1.2"></line>
+                ${yAxisLabels}
+                ${xAxisLabels}
+            `;
         }
 
         function renderChart(series) {
@@ -1361,21 +1415,22 @@
 
             const width = 800;
             const height = 290;
+            const padding = { top: 16, right: 14, bottom: 28, left: 62 };
             const session = series.map((item) => item.session_balance !== null ? Number(item.session_balance) : null);
             const real = series.map((item) => item.account_balance !== null ? Number(item.account_balance) : null);
             const all = session.concat(real).filter((item) => item !== null);
             const minValue = Math.min(...all);
             const maxValue = Math.max(...all);
-            const sessionPath = makePathFromSeries(series, width, height, (item) => item.session_balance, minValue, maxValue);
-            const realPath = makePathFromSeries(series, width, height, (item) => item.account_balance, minValue, maxValue);
-            const markers = areBalanceLabelsEnabled()
-                ? buildBalanceMarkers(series, width, height, minValue, maxValue)
+            const sessionPath = makePathFromSeries(series, width, height, (item) => item.session_balance, minValue, maxValue, padding);
+            const realPath = makePathFromSeries(series, width, height, (item) => item.account_balance, minValue, maxValue, padding);
+            const axes = areBalanceLabelsEnabled()
+                ? buildBalanceAxes(series, width, height, minValue, maxValue, padding)
                 : "";
 
             svg.innerHTML = `
+                ${axes}
                 <path d="${sessionPath}" fill="none" stroke="#1f7a4d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
                 <path d="${realPath}" fill="none" stroke="#2d6a8c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
-                ${markers}
             `;
             setText("chartMeta", `${series.length} точек`);
         }
@@ -1480,15 +1535,23 @@
                 chartsResponse.json(),
             ]);
 
-            renderSummary(statusData.snapshot, statusData.summary);
-            renderBets(historyData.recent_bets || []);
-            renderRounds(historyData.recent_rounds || []);
-            renderEvents(historyData.recent_events || []);
-            chartState.balanceSeries = chartData.balance_series || [];
+            const snapshot = getLatestSnapshot(statusData.snapshot);
+            const summary = getLatestSummary(statusData.summary);
+            const recentBets = getLatestArray(historyData.recent_bets, "recentBets");
+            const recentRounds = getLatestArray(historyData.recent_rounds, "recentRounds");
+            const recentEvents = getLatestArray(historyData.recent_events, "recentEvents");
+            const balanceSeries = getLatestArray(chartData.balance_series, "balanceSeries");
+            const resultCurve = getLatestArray(chartData.result_curve, "resultCurve");
+
+            renderSummary(snapshot, summary);
+            renderBets(recentBets);
+            renderRounds(recentRounds);
+            renderEvents(recentEvents);
+            chartState.balanceSeries = balanceSeries;
             renderChart(chartState.balanceSeries);
-            renderResultsChart(chartData.result_curve || []);
-            renderNetChart(chartData.result_curve || []);
-            renderRollingChart(chartData.result_curve || []);
+            renderResultsChart(resultCurve);
+            renderNetChart(resultCurve);
+            renderRollingChart(resultCurve);
             maybeCelebrateWin(resolveLatestWin(statusData));
         }
 
