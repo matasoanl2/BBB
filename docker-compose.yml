@@ -26,6 +26,8 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: buybaybye
+      TZ: ${TZ:-Europe/Moscow}
+      PGTZ: ${TZ:-Europe/Moscow}
     cpus: "0.50"
     mem_limit: "384m"
     shm_size: "128mb"
@@ -54,6 +56,7 @@ services:
       DB_HOST: postgres
       HEADLESS: "true"
       RUNTIME_ROLE: collector
+      TZ: ${TZ:-Europe/Moscow}
 
     volumes:
       - ./strategies:/app/strategies:ro
@@ -76,6 +79,7 @@ services:
       DB_HOST: postgres
       HEADLESS: "true"
       RUNTIME_ROLE: bettor
+      TZ: ${TZ:-Europe/Moscow}
     volumes:
       - ./profile_docker:/app/profile
       - ./strategies:/app/strategies:ro
@@ -96,6 +100,7 @@ services:
     environment:
       PYTHONUNBUFFERED: "1"
       DB_HOST: postgres
+      TZ: ${TZ:-Europe/Moscow}
     command: ["uvicorn", "dashboard:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "127.0.0.1:8000:8000"

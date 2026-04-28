@@ -2,11 +2,13 @@ FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    TZ=Europe/Moscow
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    tzdata \
     xvfb \
     xauth \
     ca-certificates \
@@ -36,6 +38,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxkbcommon0 \
     libxrandr2 \
     && rm -rf /var/lib/apt/lists/*
+
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt && patchright install chromium
