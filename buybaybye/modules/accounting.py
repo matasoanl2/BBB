@@ -95,16 +95,48 @@ def update_balance_from_accounting_payload(
     if not isinstance(data, dict):
         record_accounting_rejection_func("payload root is not an object", payload_text)
         return
-    if data.get("type") != "balance_update":
-        record_accounting_rejection_func(f"ignored message type={data.get('type')}", payload_text)
+
+    message_type = data.get("type")
+    balance_update = data.get("balance_update")
+
+    # Некоторые версии accounting_ws присылают стартовый баланс в type=subscribe
+    # внутри subscribe.balances вместо отдельного type=balance_update.
+    if not isinstance(balance_update, dict) and message_type == "subscribe":
+        subscribe_payload = data.get("subscribe")
+        if isinstance(subscribe_payload, dict):
+            balances = subscribe_payload.get("balances")
+            if isinstance(balances, list):
+                selected_balance: dict | None = None
+                for item in balances:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        if int(item.get("balance_type")) == 1:
+                            selected_balance = item
+                            break
+                    except (TypeError, ValueError):
+                        continue
+
+                if selected_balance is not None:
+                    balance_update = {
+                        "code": subscribe_payload.get("code", 200),
+                        "balance_type": selected_balance.get("balance_type"),
+                        "value": selected_balance.get("value"),
+                    }
+
+    if not isinstance(balance_update, dict):
+        record_accounting_rejection_func(f"ignored message type={message_type}", payload_text)
         return
 
-    balance_update = data.get("balance_update")
-    if not isinstance(balance_update, dict):
-        record_accounting_rejection_func("balance_update field is missing or not an object", payload_text)
+    code_value = balance_update.get("code")
+    try:
+        normalized_code = int(code_value)
+    except (TypeError, ValueError):
+        record_accounting_rejection_func(f"invalid balance_update.code={code_value}", payload_text)
         return
-    if balance_update.get("code") != 200:
-        record_accounting_rejection_func(f"balance_update.code={balance_update.get('code')}", payload_text)
+
+    if normalized_code != 200:
+        record_accounting_rejection_func(f"balance_update.code={normalized_code}", payload_text)
         return
 
     balance_type = balance_update.get("balance_type")
@@ -119,11 +151,11 @@ def update_balance_from_accounting_payload(
         return
 
     value = balance_update.get("value")
-    if not isinstance(value, (int, float)):
+    try:
+        new_balance = float(value)
+    except (TypeError, ValueError):
         record_accounting_rejection_func(f"non-numeric balance value={value}", payload_text)
         return
-
-    new_balance = float(value)
     previous_balance = betting_state.get("account_balance")
     pending_expected_bet_drop = float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0)
     pending_expected_settlement_credit = float(betting_state.get("pending_expected_settlement_credit", 0.0) or 0.0)

@@ -27,7 +27,7 @@ def make_runtime_config() -> RuntimeConfig:
         dynamic_betting=DynamicBettingConfig(True, 40, 5, True, True, True, False, False, True, 15),
         accounting=AccountingConfig(15.0, 25.0, 30.0, 300.0, 300.0, 3.0, False),
         telegram=TelegramConfig(False, "", "", 5.0, 60.0, True, True, True, True, True),
-        logging=LoggingConfig(False, True),
+        logging=LoggingConfig(False, True, False, False),
         colors=ColorConfig(True, "", "", "", "", "", "", ""),
     )
 

@@ -31,12 +31,60 @@ def format_bet_log(
     color_red: str,
     color_magenta: str,
     color_cyan: str,
+    plain_text_output_enabled: bool,
+    json_one_line_output_enabled: bool,
     pad_width_center_func,
     format_result_pretty_func,
 ) -> str:
     """Собрать форматированную строку лога для SET/RES событий ставки."""
 
-    time_str = datetime.now().strftime("%H:%M:%S")
+    now_local = datetime.now()
+    time_str = now_local.strftime("%H:%M:%S")
+
+    if json_one_line_output_enabled:
+        status_text = {"✅": "ok", "❌": "fail"}.get(status_icon, status_icon)
+        timestamp_utc = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        payload = {
+            "log_type": "bet_event",
+            "schema_version": 1,
+            "ts": timestamp_utc,
+            "time": time_str,
+            "action": action,
+            "status": status_text,
+            "round": bets_count or "-",
+            "step": step,
+            "target": outcome,
+            "amount": amount,
+            "result": result,
+            "profit": profit,
+            "roi": roi,
+            "session_balance": balance,
+            "real_balance": real_balance,
+        }
+        if error_msg:
+            payload["error"] = error_msg
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+    if plain_text_output_enabled:
+        status_text = {"✅": "ok", "❌": "fail"}.get(status_icon, status_icon)
+        fields = [
+            f"time={time_str}",
+            f"action={action}",
+            f"status={status_text}",
+            f"round={bets_count or '-'}",
+            f"step={step}",
+            f"target={outcome}",
+            f"amount={amount}",
+            f"result={result}",
+            f"profit={profit}",
+            f"roi={roi}",
+            f"session_balance={balance}",
+            f"real_balance={real_balance}",
+        ]
+        if error_msg:
+            fields.append(f"error={error_msg}")
+        return " | ".join(fields)
+
     reset_full = color_reset
     result_col_width = 13
 
@@ -232,6 +280,31 @@ def _is_target_win(target: BetTarget, dice_results: list[dict]) -> tuple[bool, s
     return False, target.outcome, None
 
 
+def _print_bet_system_log(
+    *,
+    runtime_config: RuntimeConfig,
+    event: str,
+    message: str,
+    level: str = "info",
+    extra: dict | None = None,
+) -> None:
+    if runtime_config.logging.terminal_json_logs:
+        payload = {
+            "log_type": "bet_system",
+            "schema_version": 1,
+            "ts": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            "level": level,
+            "event": event,
+            "message": message,
+        }
+        if extra:
+            payload.update(extra)
+        print(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), flush=True)
+        return
+
+    print(message, flush=True)
+
+
 async def place_bets(
     page,
     bet_targets,
@@ -325,7 +398,16 @@ async def place_bets(
                     bets_count=next_round_display,
                 )
                 print(log_line, flush=True)
-                print("[SET-STOP] Достигнут целевой real balance, автоставки остановлены.", flush=True)
+                _print_bet_system_log(
+                    runtime_config=runtime_config,
+                    event="set_stop_target_balance",
+                    level="info",
+                    message="[SET-STOP] Достигнут целевой real balance, автоставки остановлены.",
+                    extra={
+                        "account_balance": available_balance,
+                        "stop_at_balance": stop_at_balance,
+                    },
+                )
                 update_runtime_snapshot_func(
                     "bet_target_balance_pause",
                     {
@@ -366,9 +448,15 @@ async def place_bets(
                     "Пауза перед первым шагом: waiting balance update из accounting_ws для проверки required bank"
                 )
                 if pause_changed:
-                    print(
-                        "[SET-PAUSE] Первый шаг стратегии будет размещен после получения real balance из accounting_ws.",
-                        flush=True,
+                    _print_bet_system_log(
+                        runtime_config=runtime_config,
+                        event="set_pause_waiting_required_bank_balance",
+                        level="warning",
+                        message="[SET-PAUSE] Первый шаг стратегии будет размещен после получения real balance из accounting_ws.",
+                        extra={
+                            "required_bank_amount": required_bank_amount,
+                            "required_bank_base_bet_units": required_bank_units,
+                        },
                     )
                     update_runtime_snapshot_func(
                         "bet_required_bank_wait_balance",
@@ -416,7 +504,17 @@ async def place_bets(
                         bets_count=next_round_display,
                     )
                     print(log_line, flush=True)
-                    print("[SET-PAUSE] Для старта стратегии требуется полный банк цикла.", flush=True)
+                    _print_bet_system_log(
+                        runtime_config=runtime_config,
+                        event="set_pause_required_bank_insufficient",
+                        level="warning",
+                        message="[SET-PAUSE] Для старта стратегии требуется полный банк цикла.",
+                        extra={
+                            "account_balance": available_balance,
+                            "required_bank_amount": required_bank_amount,
+                            "required_bank_base_bet_units": required_bank_units,
+                        },
+                    )
                     update_runtime_snapshot_func(
                         "bet_required_bank_pause",
                         {
@@ -475,7 +573,16 @@ async def place_bets(
                         bets_count=next_round_display,
                     )
                     print(log_line, flush=True)
-                    print("[SET-PAUSE] Возобновим ставки автоматически после восстановления real balance.", flush=True)
+                    _print_bet_system_log(
+                        runtime_config=runtime_config,
+                        event="set_pause_low_balance",
+                        level="warning",
+                        message="[SET-PAUSE] Возобновим ставки автоматически после восстановления real balance.",
+                        extra={
+                            "account_balance": available_balance,
+                            "required_min_bet": amount,
+                        },
+                    )
                     update_runtime_snapshot_func(
                         "bet_low_balance_pause",
                         {
@@ -493,9 +600,14 @@ async def place_bets(
 
             if was_low_balance_paused:
                 _clear_low_balance_pause_state(betting_state)
-                print(
-                    f"[SET-RESUME] Real balance восстановлен до {available_balance:.0f}р, продолжаем размещение ставок.",
-                    flush=True,
+                _print_bet_system_log(
+                    runtime_config=runtime_config,
+                    event="set_resume_low_balance",
+                    level="info",
+                    message=f"[SET-RESUME] Real balance восстановлен до {available_balance:.0f}р, продолжаем размещение ставок.",
+                    extra={
+                        "account_balance": available_balance,
+                    },
                 )
                 update_runtime_snapshot_func(
                     "bet_low_balance_resume",
@@ -684,7 +796,12 @@ async def place_bets(
                         )
                         cursor.close()
                         conn.close()
-                        print("[AUTH] Повторяем batch-ставку один раз после обновления токена.", flush=True)
+                        _print_bet_system_log(
+                            runtime_config=runtime_config,
+                            event="auth_retry_after_token_refresh",
+                            level="warning",
+                            message="[AUTH] Повторяем batch-ставку один раз после обновления токена.",
+                        )
                         runtime_context.jwt_token = get_jwt_token_func()
                         return await place_bets(
                             page,
@@ -740,7 +857,15 @@ async def place_bets(
                     )
                     print(log_line, flush=True)
                     if pause_changed:
-                        print("[SET-PAUSE] API вернул недостаточно средств, шаг стратегии не сдвигаем.", flush=True)
+                        _print_bet_system_log(
+                            runtime_config=runtime_config,
+                            event="set_pause_api_insufficient_balance",
+                            level="warning",
+                            message="[SET-PAUSE] API вернул недостаточно средств, шаг стратегии не сдвигаем.",
+                            extra={
+                                "http_status": status_code,
+                            },
+                        )
                     else:
                         should_update_snapshot = False
                 else:

@@ -10,7 +10,9 @@ from buybaybye.modules.dynamic_betting import generate_random_bet as _dynamic_ge
 from buybaybye.modules.dynamic_betting import get_best_combination as _dynamic_get_best_combination
 from buybaybye.modules.dynamic_betting import update_dynamic_bet as _dynamic_update_dynamic_bet
 from buybaybye.modules.log_formatting import format_combo_pretty as _format_combo_pretty
+from buybaybye.modules.log_formatting import format_outcome_plain as _format_outcome_plain
 from buybaybye.modules.log_formatting import format_outcome_pretty as _format_outcome_pretty
+from buybaybye.modules.log_formatting import format_result_plain as _format_result_plain
 from buybaybye.modules.log_formatting import format_result_pretty as _format_result_pretty
 from buybaybye.modules.log_formatting import pad_width_center as _pad_width_center
 from buybaybye.modules.reporting import print_dice_stats_20 as _reporting_print_dice_stats_20
@@ -96,6 +98,10 @@ class BettingRuntimeService:
     ) -> str:
         """Собрать форматированную строку лога ставки с цветами и выравниванием."""
 
+        plain_like_terminal_logs = (
+            self.runtime_config.logging.terminal_plain_logs or self.runtime_config.logging.terminal_json_logs
+        )
+
         return _betting_format_bet_log(
             action=action,
             status_icon=status_icon,
@@ -115,13 +121,19 @@ class BettingRuntimeService:
             color_red=self.runtime_config.colors.red,
             color_magenta=self.runtime_config.colors.magenta,
             color_cyan=self.runtime_config.colors.cyan,
+            plain_text_output_enabled=self.runtime_config.logging.terminal_plain_logs,
+            json_one_line_output_enabled=self.runtime_config.logging.terminal_json_logs,
             pad_width_center_func=_pad_width_center,
-            format_result_pretty_func=_format_result_pretty,
+            format_result_pretty_func=(
+                _format_result_plain if plain_like_terminal_logs else _format_result_pretty
+            ),
         )
 
     def format_outcome_pretty(self, outcome: str, specifier: str = "") -> str:
         """Преобразовать цель ставки в короткий читаемый вид для логов и UI."""
 
+        if self.runtime_config.logging.terminal_plain_logs or self.runtime_config.logging.terminal_json_logs:
+            return _format_outcome_plain(outcome, specifier)
         return _format_outcome_pretty(outcome, specifier)
 
     def analyze_recent_bets_stats(self) -> dict:

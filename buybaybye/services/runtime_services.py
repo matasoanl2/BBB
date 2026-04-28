@@ -7,6 +7,7 @@ import asyncio
 from buybaybye.modules.betting import place_bet as _betting_place_bet
 from buybaybye.modules.betting import place_bets as _betting_place_bets
 from buybaybye.modules.betting import process_betting_round as _betting_process_betting_round
+from buybaybye.modules.log_formatting import format_round_result_plain as _format_round_result_plain
 from buybaybye.modules.log_formatting import format_round_result_pretty as _format_round_result_pretty
 from buybaybye.modules.notifications import queue_telegram_notification as _notifications_queue_telegram_notification
 from buybaybye.modules.notifications import send_telegram_notification_sync as _notifications_send_telegram_notification_sync
@@ -333,6 +334,10 @@ class RuntimeServices:
     async def process_betting_round(self, page, payload: object) -> None:
         """Обработать target websocket payload как завершенный betting round."""
 
+        plain_like_terminal_logs = (
+            self.runtime_config.logging.terminal_plain_logs or self.runtime_config.logging.terminal_json_logs
+        )
+
         await _betting_process_betting_round(
             page,
             payload,
@@ -340,7 +345,9 @@ class RuntimeServices:
             runtime_config=self.runtime_config,
             format_ws_payload_func=self.format_ws_payload,
             get_db_connection_func=self.get_db_connection,
-            format_round_result_pretty_func=_format_round_result_pretty,
+            format_round_result_pretty_func=(
+                _format_round_result_plain if plain_like_terminal_logs else _format_round_result_pretty
+            ),
             format_outcome_pretty_func=self.betting.format_outcome_pretty,
             format_bet_log_func=self.betting.format_bet_log,
             get_balance_for_log_func=self.get_balance_for_log,

@@ -161,6 +161,8 @@ class TelegramConfig:
 class LoggingConfig:
     ws_log_enabled: bool
     dice_stats_report_enabled: bool
+    terminal_plain_logs: bool
+    terminal_json_logs: bool
 
 
 @dataclass(slots=True)
@@ -346,6 +348,8 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
         logging=LoggingConfig(
             ws_log_enabled=_env_bool("WS_LOG_ENABLED"),
             dice_stats_report_enabled=_env_bool("DICE_STATS_REPORT_ENABLED", "true"),
+            terminal_plain_logs=_env_bool("TERMINAL_PLAIN_LOGS"),
+            terminal_json_logs=_env_bool("TERMINAL_JSON_LOGS"),
         ),
         colors=colors,
     )

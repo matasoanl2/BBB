@@ -63,7 +63,7 @@ def _make_runtime_config(
         ),
         accounting=AccountingConfig(15.0, 25.0, 30.0, 300.0, 300.0, 3.0, False),
         telegram=TelegramConfig(False, "", "", 5.0, 60.0, True, True, True, True, True),
-        logging=LoggingConfig(False, False),
+        logging=LoggingConfig(False, False, False, False),
         colors=ColorConfig(False, "", "", "", "", "", "", ""),
     )
 

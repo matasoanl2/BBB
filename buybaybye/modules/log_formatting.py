@@ -84,6 +84,16 @@ def format_outcome(outcome: str, specifier: str = "") -> str:
     return outcome
 
 
+def format_outcome_plain(outcome: str, specifier: str = "") -> str:
+    """Вернуть plain-текст исхода без emoji, пригодный для Loki/Grafana."""
+
+    if outcome == "double":
+        return "double"
+    if specifier:
+        return f"{outcome}({specifier})"
+    return outcome
+
+
 def format_combo_pretty(combo: str) -> str:
     """Преобразовать ключ комбинации в читаемый цветной вид для логов."""
 
@@ -122,6 +132,18 @@ def format_result_pretty(result: str) -> str:
     return result
 
 
+def format_result_plain(result: str) -> str:
+    """Преобразовать raw round result в plain-текст без emoji."""
+
+    if result == "double":
+        return "double"
+    if result.startswith("no_"):
+        return result
+    if result.startswith("red_") or result.startswith("yellow_"):
+        return result
+    return result
+
+
 def format_rolled_dice_pretty(dice_results: list) -> str:
     """Собрать строку с выпавшими кубиками в человекочитаемом виде."""
 
@@ -141,6 +163,25 @@ def format_rolled_dice_pretty(dice_results: list) -> str:
     return " ".join(parts)
 
 
+def format_rolled_dice_plain(dice_results: list) -> str:
+    """Собрать plain-строку выпавших кубиков без emoji."""
+
+    if not isinstance(dice_results, list) or len(dice_results) == 0:
+        return "-"
+
+    parts = []
+    for dice in dice_results[:2]:
+        color = dice.get("color") if isinstance(dice, dict) else None
+        value = dice.get("value") if isinstance(dice, dict) else None
+
+        if color in {"red", "yellow"} and value is not None:
+            parts.append(f"{color}_{value}")
+        else:
+            parts.append("unknown")
+
+    return " ".join(parts)
+
+
 def format_round_result_pretty(dice_results: list) -> str:
     """Вернуть итог раунда с отдельным обозначением дубля, если он выпал."""
 
@@ -154,3 +195,18 @@ def format_round_result_pretty(dice_results: list) -> str:
         return f"🎲 {v1}"
 
     return format_rolled_dice_pretty(dice_results)
+
+
+def format_round_result_plain(dice_results: list) -> str:
+    """Вернуть итог раунда plain-текстом без emoji."""
+
+    if not isinstance(dice_results, list) or len(dice_results) < 2:
+        return format_rolled_dice_plain(dice_results)
+
+    v1 = dice_results[0].get("value") if isinstance(dice_results[0], dict) else None
+    v2 = dice_results[1].get("value") if isinstance(dice_results[1], dict) else None
+
+    if isinstance(v1, int) and isinstance(v2, int) and v1 == v2:
+        return f"double_{v1}"
+
+    return format_rolled_dice_plain(dice_results)
