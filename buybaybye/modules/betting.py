@@ -290,6 +290,58 @@ async def place_bets(
         max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
         available_balance = _normalize_account_balance(betting_state.get("account_balance"))
         was_low_balance_paused = bool(betting_state.get("low_balance_pause_active"))
+        stop_at_balance = float(getattr(betting_config, "stop_at_balance", 0.0) or 0.0)
+
+        if str(betting_state.get("low_balance_pause_reason") or "") == "target_balance_reached":
+            return False
+
+        if stop_at_balance > 0 and available_balance is not None and available_balance >= stop_at_balance:
+            pause_changed = _set_low_balance_pause_state(
+                betting_state,
+                amount=stop_at_balance,
+                bet_targets=normalized_targets,
+                reason="target_balance_reached",
+            )
+            betting_state["last_bet_amount"] = 0.0
+            betting_state["last_set_amount"] = 0.0
+            betting_state["last_set_status"] = "paused_target_balance"
+            betting_state["last_set_error"] = (
+                f"Пауза: достигнут целевой баланс {available_balance:.0f}р (лимит {stop_at_balance:.0f}р)"
+            )
+            if pause_changed:
+                roi = calculate_roi_func()
+                log_line = format_bet_log_func(
+                    action="SET",
+                    status_icon="✅",
+                    outcome=targets_display,
+                    amount=f"{total_round_amount:.0f}р",
+                    step=f"{step_for_history+1}/{max_steps}",
+                    result="STOP",
+                    profit="-",
+                    roi=f"{roi:.2f}%",
+                    balance=f"{betting_state.get('session_balance', 0):.0f}р",
+                    real_balance=get_balance_for_log_func(),
+                    error_msg=betting_state["last_set_error"],
+                    bets_count=next_round_display,
+                )
+                print(log_line, flush=True)
+                print("[SET-STOP] Достигнут целевой real balance, автоставки остановлены.", flush=True)
+                update_runtime_snapshot_func(
+                    "bet_target_balance_pause",
+                    {
+                        "last_set_status": betting_state.get("last_set_status"),
+                        "last_set_error": betting_state.get("last_set_error"),
+                        "account_balance": available_balance,
+                        "stop_at_balance": stop_at_balance,
+                        "requested_targets": [target.token for target in requested_targets],
+                        "effective_targets": [],
+                        "low_balance_pause_active": True,
+                        "low_balance_pause_required_balance": stop_at_balance,
+                        "low_balance_pause_reason": betting_state.get("low_balance_pause_reason"),
+                    },
+                )
+            return False
+
         required_bank_units = int(
             (current_strategy or {}).get(
                 "required_bank_base_bet_units",
@@ -742,6 +794,7 @@ async def place_bets(
                 "pending_bets_count": len(betting_state.get("pending_bets", [])),
                 "low_balance_pause_active": betting_state.get("low_balance_pause_active", False),
                 "low_balance_pause_required_balance": betting_state.get("low_balance_pause_required_balance", 0.0),
+                "low_balance_pause_reason": betting_state.get("low_balance_pause_reason"),
             }
             conn.commit()
             cursor.close()

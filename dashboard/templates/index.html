@@ -933,6 +933,7 @@
             paused_low_balance: "warning",
             paused_required_bank_balance_unknown: "warning",
             paused_required_bank: "warning",
+            paused_target_balance: "warning",
             precheck_error: "danger",
             forbidden_refresh: "danger",
             retry_after_refresh: "warning",
@@ -1111,6 +1112,9 @@
             }
             if (normalized === "api_insufficient_balance") {
                 return "api insufficient balance";
+            }
+            if (normalized === "target_balance_reached") {
+                return "target balance reached";
             }
             return normalized;
         }
