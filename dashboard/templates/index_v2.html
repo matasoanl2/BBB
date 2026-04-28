@@ -1055,6 +1055,38 @@
             return lastDataState[key] || [];
         }
 
+        function hasRealBalancePoint(series) {
+            if (!Array.isArray(series)) {
+                return false;
+            }
+
+            return series.some((item) => {
+                return item
+                    && item.account_balance !== null
+                    && item.account_balance !== undefined
+                    && !Number.isNaN(Number(item.account_balance));
+            });
+        }
+
+        function getLatestBalanceSeries(items) {
+            const previous = Array.isArray(lastDataState.balanceSeries) ? lastDataState.balanceSeries : [];
+            const previousHasReal = hasRealBalancePoint(previous);
+
+            if (Array.isArray(items) && items.length > 0) {
+                const filtered = items.filter((entry) => isValidBalancePoint(entry));
+                if (filtered.length > 0) {
+                    const incomingHasReal = hasRealBalancePoint(filtered);
+                    if (!previous.length || incomingHasReal || !previousHasReal) {
+                        lastDataState.balanceSeries = filtered;
+                        return filtered;
+                    }
+                    return previous;
+                }
+            }
+
+            return previous;
+        }
+
         function renderAlert(message, kind = "warn") {
             const node = document.getElementById("dashboardAlert");
             if (!node) return;
@@ -1121,8 +1153,8 @@
             return renderDieHtml(targetDie.value, targetDie.tone);
         }
 
-        function renderLastRoundResultHtml(snapshot) {
-            const resolvedPair = resolveDicePair(
+        function renderLastRoundResultHtml(snapshot, recentRounds = []) {
+            const fromSnapshot = resolveDicePair(
                 snapshot?.last_round_red_value ?? snapshot?.last_red_value ?? snapshot?.red_value,
                 snapshot?.last_round_yellow_value ?? snapshot?.last_yellow_value ?? snapshot?.yellow_value,
                 [
@@ -1132,10 +1164,20 @@
                     snapshot?.last_result_display,
                 ],
             );
-            return renderResolvedDicePairHtml(resolvedPair);
+            if (fromSnapshot.redValue !== null || fromSnapshot.yellowValue !== null) {
+                return renderResolvedDicePairHtml(fromSnapshot);
+            }
+
+            const latestRound = Array.isArray(recentRounds) && recentRounds.length > 0 ? recentRounds[0] : null;
+            const fromRecentRound = resolveDicePair(
+                latestRound?.red_value,
+                latestRound?.yellow_value,
+                [latestRound?.display, latestRound?.result],
+            );
+            return renderResolvedDicePairHtml(fromRecentRound);
         }
 
-        function renderSummary(snapshot, summary) {
+        function renderSummary(snapshot, summary, recentRounds = []) {
             setText("strategyName", snapshot.strategy_display_name || "Нет активной стратегии");
             const currentTargetNode = document.getElementById("currentTarget");
             if (currentTargetNode) {
@@ -1170,7 +1212,7 @@
                 { label: "Балансовый delta", value: fmtMoney(summary.balance_delta) },
                 { label: "Reconciliation", value: summary.reconciliation_phase || "-" },
                 { label: "Последний SET status", value: snapshot.last_set_status || "-" },
-                { label: "Последний round result", value: renderLastRoundResultHtml(snapshot), isHtml: true },
+                { label: "Последний round result", value: renderLastRoundResultHtml(snapshot, recentRounds), isHtml: true },
                 { label: "Выводы", value: fmtMoney(summary.withdrawals_total) },
             ];
 
@@ -1353,10 +1395,10 @@
                 summary: getLatestSummary(statusData?.summary),
                 recentBets: getLatestArray(historyData?.recent_bets, "recentBets", isValidBetItem),
                 recentRounds: getLatestArray(historyData?.recent_rounds, "recentRounds", isValidRoundItem),
-                balanceSeries: getLatestArray(chartData?.balance_series, "balanceSeries", isValidBalancePoint),
+                balanceSeries: getLatestBalanceSeries(chartData?.balance_series),
             };
 
-            renderSummary(effectivePayload.snapshot, effectivePayload.summary);
+            renderSummary(effectivePayload.snapshot, effectivePayload.summary, effectivePayload.recentRounds);
             renderBets(effectivePayload.recentBets);
             renderRounds(effectivePayload.recentRounds);
             chartState.balanceSeries = effectivePayload.balanceSeries;
