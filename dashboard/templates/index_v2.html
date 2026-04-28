@@ -206,6 +206,27 @@
             font-size: 13px;
         }
 
+        .chart-controls {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .labels-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--muted);
+            font-size: 12px;
+            user-select: none;
+            cursor: pointer;
+        }
+
+        .labels-toggle input {
+            accent-color: var(--green);
+            cursor: pointer;
+        }
+
         .chart-shell {
             position: relative;
             height: 290px;
@@ -461,7 +482,13 @@
                         <div class="section-title">Кривая баланса</div>
                         <div class="section-note">Session и real balance из runtime_events</div>
                     </div>
-                    <div class="section-note" id="chartMeta">0 точек</div>
+                    <div class="chart-controls">
+                        <label class="labels-toggle">
+                            <input type="checkbox" id="balanceLabelsToggle" checked>
+                            Подписи
+                        </label>
+                        <div class="section-note" id="chartMeta">0 точек</div>
+                    </div>
                 </div>
                 <div class="chart-shell">
                     <svg id="balanceChart" viewBox="0 0 800 290" preserveAspectRatio="none"></svg>
@@ -531,6 +558,10 @@
     </div>
 
     <script>
+        const chartState = {
+            balanceSeries: [],
+        };
+
         const fmtMoney = (value) => {
             if (value === null || value === undefined || value === "") return "-";
             const number = Number(value);
@@ -749,6 +780,81 @@
             return commands.join(" ");
         }
 
+        function formatChartTime(value) {
+            if (!value) return "-";
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return "-";
+            return date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+        }
+
+        function areBalanceLabelsEnabled() {
+            const toggle = document.getElementById("balanceLabelsToggle");
+            return !toggle || toggle.checked;
+        }
+
+        function getBalanceLabelIndices(series) {
+            const validPoints = [];
+
+            series.forEach((entry, index) => {
+                const value = entry.session_balance;
+                if (value === null || value === undefined || Number.isNaN(Number(value))) {
+                    return;
+                }
+                validPoints.push({ index, value: Number(value) });
+            });
+
+            if (!validPoints.length) return new Set();
+
+            let minPoint = validPoints[0];
+            let maxPoint = validPoints[0];
+            const lastPoint = validPoints[validPoints.length - 1];
+
+            for (const point of validPoints) {
+                if (point.value < minPoint.value) minPoint = point;
+                if (point.value > maxPoint.value) maxPoint = point;
+            }
+
+            return new Set([lastPoint.index, minPoint.index, maxPoint.index]);
+        }
+
+        function buildBalanceMarkers(series, width, height, minValue, maxValue) {
+            if (!series.length) return "";
+
+            const span = Math.max(maxValue - minValue, 1);
+            const labelIndices = getBalanceLabelIndices(series);
+            let markers = "";
+
+            series.forEach((entry, index) => {
+                const shouldLabel = labelIndices.has(index);
+                const sessionValue = entry.session_balance;
+                if (!shouldLabel || sessionValue === null || sessionValue === undefined || Number.isNaN(Number(sessionValue))) {
+                    return;
+                }
+
+                const x = series.length === 1 ? width / 2 : (index / (series.length - 1)) * width;
+                const y = height - ((Number(sessionValue) - minValue) / span) * height;
+                const timeLabel = formatChartTime(entry.timestamp);
+                const sessionLabel = `${Math.round(Number(sessionValue))}р`;
+                const realValue = entry.account_balance;
+                const realLabel = realValue === null || realValue === undefined || Number.isNaN(Number(realValue))
+                    ? "-"
+                    : `${Math.round(Number(realValue))}р`;
+                const text = `${timeLabel} | S:${sessionLabel} | R:${realLabel}`;
+
+                const nearRightEdge = x > width - 180;
+                const textAnchor = nearRightEdge ? "end" : "start";
+                const textX = nearRightEdge ? x - 8 : x + 8;
+                const textY = Math.max(14, y - 10);
+
+                markers += `
+                    <circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="3.8" fill="#1f7a4d" stroke="#ffffff" stroke-width="1.2"></circle>
+                    <text x="${textX.toFixed(2)}" y="${textY.toFixed(2)}" text-anchor="${textAnchor}" fill="#394333" font-size="11" font-weight="700">${text}</text>
+                `;
+            });
+
+            return markers;
+        }
+
         function renderChart(series) {
             const svg = document.getElementById("balanceChart");
             if (!svg) return;
@@ -768,10 +874,14 @@
             const maxValue = Math.max(...all);
             const sessionPath = makePathFromSeries(series, width, height, (item) => item.session_balance, minValue, maxValue);
             const realPath = makePathFromSeries(series, width, height, (item) => item.account_balance, minValue, maxValue);
+            const markers = areBalanceLabelsEnabled()
+                ? buildBalanceMarkers(series, width, height, minValue, maxValue)
+                : "";
 
             svg.innerHTML = `
                 <path d="${sessionPath}" fill="none" stroke="#1f7a4d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
                 <path d="${realPath}" fill="none" stroke="#2d6a8c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+                ${markers}
             `;
             setText("chartMeta", `${series.length} точек`);
         }
@@ -798,10 +908,18 @@
             renderSummary(statusData.snapshot, statusData.summary);
             renderBets(historyData.recent_bets || []);
             renderRounds(historyData.recent_rounds || []);
-            renderChart(chartData.balance_series || []);
+            chartState.balanceSeries = chartData.balance_series || [];
+            renderChart(chartState.balanceSeries);
         }
 
         async function boot() {
+            const labelsToggle = document.getElementById("balanceLabelsToggle");
+            if (labelsToggle) {
+                labelsToggle.addEventListener("change", () => {
+                    renderChart(chartState.balanceSeries || []);
+                });
+            }
+
             try {
                 await refresh();
             } catch (error) {
