@@ -5,31 +5,31 @@ services:
     command:
       - postgres
       - -c
-      - max_connections=20
+      - max_connections=12
       - -c
-      - shared_buffers=64MB
+      - shared_buffers=32MB
       - -c
-      - effective_cache_size=192MB
+      - effective_cache_size=96MB
       - -c
-      - maintenance_work_mem=32MB
+      - maintenance_work_mem=16MB
       - -c
-      - work_mem=2MB
+      - work_mem=1MB
       - -c
-      - wal_buffers=4MB
+      - wal_buffers=2MB
       - -c
-      - temp_buffers=2MB
+      - temp_buffers=1MB
       - -c
-      - min_wal_size=80MB
+      - min_wal_size=32MB
       - -c
-      - max_wal_size=256MB
+      - max_wal_size=128MB
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: buybaybye
       TZ: ${TZ:-Europe/Moscow}
       PGTZ: ${TZ:-Europe/Moscow}
-    cpus: "0.50"
-    mem_limit: "384m"
+    cpus: "0.35"
+    mem_limit: "256m"
     shm_size: "128mb"
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
@@ -60,6 +60,8 @@ services:
 
     volumes:
       - ./strategies:/app/strategies:ro
+    cpus: "1.20"
+    mem_limit: "1024m"
     shm_size: "1gb"
     stdin_open: true
     tty: true
@@ -83,6 +85,8 @@ services:
     volumes:
       - ./profile_docker:/app/profile
       - ./strategies:/app/strategies:ro
+    cpus: "1.20"
+    mem_limit: "1024m"
     shm_size: "1gb"
     stdin_open: true
     tty: true
@@ -90,7 +94,7 @@ services:
   dashboard:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.dashboard
     container_name: bb-dashboard
     depends_on:
       postgres:
@@ -101,6 +105,8 @@ services:
       PYTHONUNBUFFERED: "1"
       DB_HOST: postgres
       TZ: ${TZ:-Europe/Moscow}
+    cpus: "0.30"
+    mem_limit: "256m"
     command: ["uvicorn", "dashboard:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
-      - "127.0.0.1:8000:8000"
+      - "8000:8000"
