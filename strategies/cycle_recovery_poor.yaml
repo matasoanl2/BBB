@@ -1,5 +1,7 @@
 name: "Cycle Recovery Poor"
 description: "Циклическая стратегия с повторяющимся паттерном восстановления"
 coefficients: [1, 1, 2, 2, 4]
+# банк: 10 базовых ставок | раундов: 5
 payout_coefficient: 5.7
 reset_condition: "win"
+

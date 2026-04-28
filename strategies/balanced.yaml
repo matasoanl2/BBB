@@ -1,5 +1,7 @@
 name: "Balanced Progressive"
 description: "Сбалансированная прогрессия с контролем риска"
 coefficients: [1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4]
+# банк: 32 базовых ставок | раундов: 15
 payout_coefficient: 5.7
 reset_condition: "win"
+

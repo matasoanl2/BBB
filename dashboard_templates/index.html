@@ -657,6 +657,25 @@
 
         const statusClass = (status) => `status-pill status-${String(status || "").replace(/[^a-z_]/gi, "_").toLowerCase()}`;
 
+        function formatPauseReason(reason) {
+            const normalized = String(reason || "").trim().toLowerCase();
+            if (!normalized) return "-";
+
+            if (normalized === "required_bank_waiting_balance") {
+                return "waiting balance";
+            }
+            if (normalized === "required_bank_insufficient") {
+                return "insufficient required bank";
+            }
+            if (normalized === "min_bet_insufficient") {
+                return "insufficient min bet";
+            }
+            if (normalized === "api_insufficient_balance") {
+                return "api insufficient balance";
+            }
+            return normalized;
+        }
+
         function setText(id, value) {
             const node = document.getElementById(id);
             if (node) node.textContent = value;
@@ -683,6 +702,7 @@
                 ["Последний round result", snapshot.last_round_result || "-"],
                 ["Последний SET status", snapshot.last_set_status || "-"],
                 ["Последний SET error", snapshot.last_set_error || "-"],
+                ["Причина паузы", formatPauseReason(snapshot.low_balance_pause_reason)],
             ];
 
             rows.forEach(([label, value]) => {
@@ -750,7 +770,7 @@
                     </div>
                     <div>
                         <div class="event-main">round=${event.last_round_result || "-"}</div>
-                        <div class="event-extra">set=${event.last_set_status || "-"}</div>
+                        <div class="event-extra">set=${event.last_set_status || "-"}, pause=${formatPauseReason(event.low_balance_pause_reason)}</div>
                     </div>
                     <div class="event-extra mono">session=${fmtMoney(event.session_balance)} / real=${fmtMoney(event.account_balance)}</div>
                 </div>

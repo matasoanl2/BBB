@@ -146,19 +146,28 @@ def _normalize_account_balance(raw_balance) -> float | None:
 def _clear_low_balance_pause_state(betting_state: dict) -> None:
     betting_state["low_balance_pause_active"] = False
     betting_state["low_balance_pause_required_balance"] = 0.0
+    betting_state["low_balance_pause_reason"] = None
     betting_state["low_balance_pause_started_at"] = None
     betting_state["low_balance_pause_targets"] = []
 
 
-def _set_low_balance_pause_state(betting_state: dict, *, amount: float, bet_targets: tuple[BetTarget, ...]) -> bool:
+def _set_low_balance_pause_state(
+    betting_state: dict,
+    *,
+    amount: float,
+    bet_targets: tuple[BetTarget, ...],
+    reason: str,
+) -> bool:
     target_tokens = [target.token for target in bet_targets]
     state_changed = (
         not betting_state.get("low_balance_pause_active")
         or float(betting_state.get("low_balance_pause_required_balance", 0.0) or 0.0) != float(amount)
+        or str(betting_state.get("low_balance_pause_reason") or "") != str(reason)
         or list(betting_state.get("low_balance_pause_targets") or []) != target_tokens
     )
     betting_state["low_balance_pause_active"] = True
     betting_state["low_balance_pause_required_balance"] = float(amount)
+    betting_state["low_balance_pause_reason"] = str(reason)
     betting_state["low_balance_pause_targets"] = target_tokens
     if state_changed:
         betting_state["low_balance_pause_started_at"] = datetime.now(timezone.utc).isoformat()
@@ -281,6 +290,98 @@ async def place_bets(
         max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
         available_balance = _normalize_account_balance(betting_state.get("account_balance"))
         was_low_balance_paused = bool(betting_state.get("low_balance_pause_active"))
+        required_bank_units = int(
+            (current_strategy or {}).get(
+                "required_bank_base_bet_units",
+                sum((current_strategy or {}).get("coefficients", [1])),
+            )
+        )
+        required_bank_amount = float(required_bank_units) * float(betting_config.base_bet) * float(len(normalized_targets))
+        is_first_strategy_step = int(betting_state.get("total_bet_rounds", 0) or 0) == 0 and int(step_for_history or 0) == 0
+
+        if is_first_strategy_step:
+            if available_balance is None:
+                pause_changed = _set_low_balance_pause_state(
+                    betting_state,
+                    amount=required_bank_amount,
+                    bet_targets=normalized_targets,
+                    reason="required_bank_waiting_balance",
+                )
+                betting_state["last_bet_amount"] = 0.0
+                betting_state["last_set_amount"] = 0.0
+                betting_state["last_set_status"] = "paused_required_bank_balance_unknown"
+                betting_state["last_set_error"] = (
+                    "Пауза перед первым шагом: waiting balance update из accounting_ws для проверки required bank"
+                )
+                if pause_changed:
+                    print(
+                        "[SET-PAUSE] Первый шаг стратегии будет размещен после получения real balance из accounting_ws.",
+                        flush=True,
+                    )
+                    update_runtime_snapshot_func(
+                        "bet_required_bank_wait_balance",
+                        {
+                            "last_set_status": betting_state.get("last_set_status"),
+                            "last_set_error": betting_state.get("last_set_error"),
+                            "required_bank_amount": required_bank_amount,
+                            "required_bank_base_bet_units": required_bank_units,
+                            "requested_targets": [target.token for target in requested_targets],
+                            "effective_targets": [],
+                            "low_balance_pause_active": True,
+                            "low_balance_pause_required_balance": required_bank_amount,
+                            "low_balance_pause_reason": betting_state.get("low_balance_pause_reason"),
+                        },
+                    )
+                return False
+
+            if available_balance < required_bank_amount:
+                pause_changed = _set_low_balance_pause_state(
+                    betting_state,
+                    amount=required_bank_amount,
+                    bet_targets=normalized_targets,
+                    reason="required_bank_insufficient",
+                )
+                betting_state["last_bet_amount"] = 0.0
+                betting_state["last_set_amount"] = 0.0
+                betting_state["last_set_status"] = "paused_required_bank"
+                betting_state["last_set_error"] = (
+                    f"Пауза перед первым шагом: баланс {available_balance:.0f}р меньше required bank {required_bank_amount:.0f}р"
+                )
+                if pause_changed:
+                    roi = calculate_roi_func()
+                    log_line = format_bet_log_func(
+                        action="SET",
+                        status_icon="❌",
+                        outcome=targets_display,
+                        amount=f"{total_round_amount:.0f}р",
+                        step=f"{step_for_history+1}/{max_steps}",
+                        result="PAUSE",
+                        profit="-",
+                        roi=f"{roi:.2f}%",
+                        balance=f"{betting_state.get('session_balance', 0):.0f}р",
+                        real_balance=get_balance_for_log_func(),
+                        error_msg=betting_state["last_set_error"],
+                        bets_count=next_round_display,
+                    )
+                    print(log_line, flush=True)
+                    print("[SET-PAUSE] Для старта стратегии требуется полный банк цикла.", flush=True)
+                    update_runtime_snapshot_func(
+                        "bet_required_bank_pause",
+                        {
+                            "last_set_status": betting_state.get("last_set_status"),
+                            "last_set_error": betting_state.get("last_set_error"),
+                            "account_balance": available_balance,
+                            "required_bank_amount": required_bank_amount,
+                            "required_bank_base_bet_units": required_bank_units,
+                            "requested_targets": [target.token for target in requested_targets],
+                            "effective_targets": [],
+                            "low_balance_pause_active": True,
+                            "low_balance_pause_required_balance": required_bank_amount,
+                            "low_balance_pause_reason": betting_state.get("low_balance_pause_reason"),
+                        },
+                    )
+                return False
+
         if available_balance is None:
             if was_low_balance_paused:
                 return False
@@ -297,6 +398,7 @@ async def place_bets(
                     betting_state,
                     amount=amount,
                     bet_targets=normalized_targets,
+                    reason="min_bet_insufficient",
                 )
                 betting_state["last_bet_amount"] = 0.0
                 betting_state["last_set_amount"] = total_round_amount
@@ -332,6 +434,7 @@ async def place_bets(
                             "effective_targets": [],
                             "low_balance_pause_active": True,
                             "low_balance_pause_required_balance": amount,
+                            "low_balance_pause_reason": betting_state.get("low_balance_pause_reason"),
                         },
                     )
                 return False
@@ -564,6 +667,7 @@ async def place_bets(
                         betting_state,
                         amount=amount,
                         bet_targets=normalized_targets,
+                        reason="api_insufficient_balance",
                     )
                     betting_state["last_set_status"] = "paused_low_balance"
                     snapshot_event_type = "bet_low_balance_pause"

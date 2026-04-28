@@ -931,6 +931,8 @@
             loss: "danger",
             error: "danger",
             paused_low_balance: "warning",
+            paused_required_bank_balance_unknown: "warning",
+            paused_required_bank: "warning",
             precheck_error: "danger",
             forbidden_refresh: "danger",
             retry_after_refresh: "warning",
@@ -1094,6 +1096,25 @@
             return `${String(currentOutcome).toUpperCase()} ${snapshot.current_specifier || ""}`.trim();
         }
 
+        function formatPauseReason(reason) {
+            const normalized = String(reason || "").trim().toLowerCase();
+            if (!normalized) return "-";
+
+            if (normalized === "required_bank_waiting_balance") {
+                return "waiting balance";
+            }
+            if (normalized === "required_bank_insufficient") {
+                return "insufficient required bank";
+            }
+            if (normalized === "min_bet_insufficient") {
+                return "insufficient min bet";
+            }
+            if (normalized === "api_insufficient_balance") {
+                return "api insufficient balance";
+            }
+            return normalized;
+        }
+
         function renderSummary(snapshot, summary) {
             setText("strategyName", snapshot.strategy_display_name || "Нет активной стратегии");
             setText("currentTarget", formatTarget(snapshot));
@@ -1104,9 +1125,12 @@
             setText("stepLabel", summary.step_label || "-");
             setText("lossStreak", String(summary.consecutive_losses || 0));
             setText("withdrawalsTotal", fmtMoney(summary.withdrawals_total));
+            const pauseReasonLabel = formatPauseReason(snapshot.low_balance_pause_reason);
 
             if (summary.freshness_state === "stale") {
                 renderAlert("Accounting balance устарел или поток данных деградировал", "warn");
+            } else if (snapshot.low_balance_pause_active && pauseReasonLabel !== "-") {
+                renderAlert(`Пауза ставок: ${pauseReasonLabel}`, "warn");
             } else if (snapshot.last_set_error) {
                 renderAlert(`Последняя ошибка SET: ${snapshot.last_set_error}`, "warn");
             } else {
@@ -1126,6 +1150,7 @@
                 ["Последний round result", snapshot.last_round_result || "-"],
                 ["Последний SET status", snapshot.last_set_status || "-"],
                 ["Последний SET error", snapshot.last_set_error || "-"],
+                ["Причина паузы", pauseReasonLabel],
             ];
 
             rows.forEach(([label, value]) => {
@@ -1193,7 +1218,7 @@
                     </div>
                     <div>
                         <div class="event-main">round=${escapeHtml(event.last_round_result || "-")}</div>
-                        <div class="event-extra">set=${escapeHtml(event.last_set_status || "-")}</div>
+                        <div class="event-extra">set=${escapeHtml(event.last_set_status || "-")}, pause=${escapeHtml(formatPauseReason(event.low_balance_pause_reason))}</div>
                     </div>
                     <div class="event-extra mono">session=${fmtMoney(event.session_balance)} / real=${fmtMoney(event.account_balance)}</div>
                 </div>

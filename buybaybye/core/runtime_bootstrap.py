@@ -31,9 +31,17 @@ def print_strategy_startup_info(
     multi_bet_enabled = len(runtime_context.get_configured_bet_targets()) > 1
     dynamic_mode_effective = dynamic_config.enabled and (not multi_bet_enabled or dynamic_config.multi_target_enabled)
     base_bet = runtime_config.betting.base_bet
+    configured_targets_count = max(1, len(runtime_context.get_configured_bet_targets()))
     print(f"[STRATEGY] Загружена стратегия: {current_strategy['name']}", flush=True)
     print(f"[STRATEGY] Описание: {current_strategy['description']}", flush=True)
     print(f"[STRATEGY] Шагов: {len(current_strategy['coefficients'])}, базовая ставка: {base_bet}р", flush=True)
+    required_units = int(current_strategy.get("required_bank_base_bet_units", sum(current_strategy["coefficients"])))
+    required_bank = required_units * base_bet * configured_targets_count
+    print(
+        f"[STRATEGY] Требуемый банк для полного цикла: {required_bank:.0f}р "
+        f"(required_bank_base_bet_units={required_units}, targets={configured_targets_count})",
+        flush=True,
+    )
     print(f"[STRATEGY] Цель ставки: {_format_configured_target(runtime_context)}", flush=True)
     print("[STRATEGY] Примеры ставок (BASE_BET × коэффициент):", flush=True)
     for index in range(min(5, len(current_strategy["coefficients"]))):
@@ -107,11 +115,20 @@ def build_runtime_status_line(
     else:
         status_line += "Профиль сессии: не используется, контекст эфемерный\n"
     if runtime_config.betting.enabled and runtime_context.current_strategy:
+        required_units = int(
+            runtime_context.current_strategy.get(
+                "required_bank_base_bet_units",
+                sum(runtime_context.current_strategy.get("coefficients", [1])),
+            )
+        )
+        configured_targets_count = max(1, len(runtime_context.get_configured_bet_targets()))
+        required_bank = runtime_config.betting.base_bet * required_units * configured_targets_count
         status_line += "🎲 РЕЖИМ СТАВОК ВКЛЮЧЕН\n"
         status_line += f"  - Стратегия: {runtime_context.current_strategy['name']}\n"
         status_line += f"  - Цель: {_format_configured_target(runtime_context)}\n"
         status_line += f"  - Базовая ставка: {runtime_config.betting.base_bet}р\n"
         status_line += f"  - Коэффициентов в прогрессии: {len(runtime_context.current_strategy['coefficients'])}\n"
+        status_line += f"  - Требуемый банк цикла: {required_bank:.0f}р (targets={configured_targets_count})\n"
         status_line += f"  - Задержка перед ставкой: {runtime_config.betting.bet_delay_min:.1f}-{runtime_config.betting.bet_delay_max:.1f}с\n"
     elif runtime_config.betting.requested_enabled and not runtime_config.betting.enabled:
         status_line += "🎲 РЕЖИМ СТАВОК ПРИНУДИТЕЛЬНО ОТКЛЮЧЕН ДЛЯ ТЕКУЩЕЙ РОЛИ\n"

@@ -1,5 +1,7 @@
 name: "Paroli (Reverse Martingale)"
 description: "Увеличиваешь ставку с каждой ПОБЕДОЙ, сбрасываешь при проигрыше - консервативная риск-менеджмент стратегия"
 coefficients: [1, 2, 4, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8]
+# банк: 103 базовых ставок | раундов: 15
 payout_coefficient: 5.7
 reset_condition: "loss"
+

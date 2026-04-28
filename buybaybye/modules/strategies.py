@@ -30,6 +30,12 @@ def validate_strategy_coefficients(strategy_name: str, coefficients: list, base_
     return True, ""
 
 
+def resolve_required_bank_base_bet_units(coefficients: list) -> int:
+    """Вычислить required bank в единицах BASE_BET как сумму коэффициентов стратегии."""
+
+    return int(sum(int(coeff) for coeff in coefficients))
+
+
 def load_strategies(strategies_dir: Path, base_bet: float) -> dict:
     """Загрузить и провалидировать все YAML-стратегии из папки strategies."""
     try:
@@ -57,10 +63,19 @@ def load_strategies(strategies_dir: Path, base_bet: float) -> dict:
                     print(f"[WARNING] Пропуск стратегии {strategy_key}", flush=True)
                     continue
 
+                required_bank_base_bet_units = resolve_required_bank_base_bet_units(coefficients)
+                if required_bank_base_bet_units <= 0:
+                    print(
+                        f"[WARNING] Стратегия {strategy_key}: сумма коэффициентов должна быть > 0, пропуск.",
+                        flush=True,
+                    )
+                    continue
+
                 strategies[strategy_key] = {
                     "name": strategy_data.get("name", strategy_key),
                     "description": strategy_data.get("description", ""),
                     "coefficients": coefficients,
+                    "required_bank_base_bet_units": required_bank_base_bet_units,
                     "payout_coefficient": strategy_data.get("payout_coefficient", 5.7),
                     "reset_condition": strategy_data.get("reset_condition", "win"),
                 }

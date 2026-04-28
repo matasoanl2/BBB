@@ -1,5 +1,7 @@
 name: "Cycle Recovery Absolute"
 description: "Циклическая стратегия с повторяющимся паттерном восстановления"
 coefficients: [1, 1, 2, 2, 4, 1, 1, 2, 2, 4, 1, 2, 4, 8, 16, 16]
+# банк: 67 базовых ставок | раундов: 16
 payout_coefficient: 5.7
 reset_condition: "win"
+

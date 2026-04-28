@@ -1,5 +1,7 @@
-name: "Doubling Cycle"
+﻿name: "Doubling Cycle"
 description: "Циклическая стратегия с удваивающимся паттерном (степени двойки)"
 coefficients: [1, 2, 4, 8, 16, 1, 2, 4, 8, 16, 1, 2, 4, 8, 16]
+# банк: 93 базовых ставок | раундов: 15
 payout_coefficient: 5.7
 reset_condition: "win"
+

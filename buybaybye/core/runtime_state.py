@@ -46,6 +46,7 @@ class RuntimeBettingState:
     last_external_balance_change_amount: float = 0.0
     low_balance_pause_active: bool = False
     low_balance_pause_required_balance: float = 0.0
+    low_balance_pause_reason: str | None = None
     low_balance_pause_started_at: str | None = None
     low_balance_pause_targets: list[str] = field(default_factory=list)
     last_bet_amount: float = 0.0

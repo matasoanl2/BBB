@@ -78,6 +78,7 @@ DEFAULT_SNAPSHOT = {
     "last_round_result": None,
     "last_set_status": None,
     "last_set_error": None,
+    "low_balance_pause_reason": None,
 }
 
 RUNTIME_ROLE_FIELDS = (
@@ -591,6 +592,7 @@ def _get_recent_events(limit: int = 20, preferred_role: str | None = None, conn=
             "session_balance": payload.get("session_balance"),
             "account_balance": payload.get("account_balance"),
             "last_set_status": payload.get("last_set_status"),
+            "low_balance_pause_reason": payload.get("low_balance_pause_reason"),
             "last_round_result": payload.get("last_round_result"),
             "runtime_role": row.get("runtime_role") or selected_role,
         })

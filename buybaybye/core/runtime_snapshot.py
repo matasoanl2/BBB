@@ -67,6 +67,7 @@ def build_runtime_snapshot(
         "pending_bets_count": len(betting_state.get("pending_bets", [])) if betting_state else 0,
         "low_balance_pause_active": betting_state.get("low_balance_pause_active") if betting_state else False,
         "low_balance_pause_required_balance": betting_state.get("low_balance_pause_required_balance") if betting_state else 0.0,
+        "low_balance_pause_reason": betting_state.get("low_balance_pause_reason") if betting_state else None,
         "low_balance_pause_started_at": betting_state.get("low_balance_pause_started_at") if betting_state else None,
         "low_balance_pause_targets": betting_state.get("low_balance_pause_targets") if betting_state else [],
         "external_deposits_total": betting_state.get("external_deposits_total") if betting_state else 0.0,
