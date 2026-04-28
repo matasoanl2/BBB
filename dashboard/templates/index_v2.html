@@ -479,23 +479,28 @@
             <div class="panel chart-panel">
                 <div class="section-head">
                     <div>
-                        <div class="section-title">Кривая баланса</div>
-                        <div class="section-note">Session и real balance из runtime_events</div>
+                        <div class="section-title">Кривые баланса</div>
+                        <div class="section-note">Session и real balance из runtime_events на отдельных графиках</div>
                     </div>
                     <div class="chart-controls">
                         <label class="labels-toggle">
                             <input type="checkbox" id="balanceLabelsToggle" checked>
                             Подписи
                         </label>
-                        <div class="section-note" id="chartMeta">0 точек</div>
+                        <div class="section-note" id="sessionChartMeta">0 точек</div>
                     </div>
                 </div>
                 <div class="chart-shell">
-                    <svg id="balanceChart" viewBox="0 0 800 290" preserveAspectRatio="none"></svg>
+                    <div class="section-note" style="margin-bottom: 6px;">Session balance</div>
+                    <svg id="sessionBalanceChart" viewBox="0 0 800 290" preserveAspectRatio="none"></svg>
+                </div>
+                <div class="chart-shell" style="margin-top: 12px;">
+                    <div class="section-note" style="margin-bottom: 6px;">Real balance</div>
+                    <svg id="realBalanceChart" viewBox="0 0 800 290" preserveAspectRatio="none"></svg>
                 </div>
                 <div class="legend">
                     <span class="session">Session balance</span>
-                    <span class="real">Real balance</span>
+                    <span class="real" id="realChartMeta">0 точек</span>
                 </div>
             </div>
 
@@ -630,10 +635,25 @@
                 .replaceAll("'", "&#39;");
         }
 
+        function hasMeaningfulNumber(value) {
+            return value !== null && value !== undefined && value !== "" && Number(value) !== 0;
+        }
+
         function hasMeaningfulSnapshot(snapshot) {
             if (!snapshot || typeof snapshot !== "object") return false;
 
-            if (snapshot.updated_at || snapshot.strategy_display_name || snapshot.last_set_status || snapshot.last_round_result) {
+            if (
+                snapshot.strategy_display_name
+                || snapshot.last_set_status
+                || snapshot.last_round_result
+                || snapshot.current_outcome
+                || snapshot.current_specifier
+                || snapshot.low_balance_pause_reason
+                || hasMeaningfulNumber(snapshot.current_step)
+                || hasMeaningfulNumber(snapshot.max_steps)
+                || hasMeaningfulNumber(snapshot.session_balance)
+                || hasMeaningfulNumber(snapshot.account_balance)
+            ) {
                 return true;
             }
 
@@ -647,7 +667,7 @@
         function hasMeaningfulSummary(summary) {
             if (!summary || typeof summary !== "object") return false;
 
-            if (summary.step_label || summary.reconciliation_phase || summary.freshness_state) {
+            if (summary.step_label && summary.step_label !== "-") {
                 return true;
             }
 
@@ -662,8 +682,7 @@
             ];
 
             return numericKeys.some((key) => {
-                const value = summary[key];
-                return value !== null && value !== undefined && value !== "" && Number(value) !== 0;
+                return hasMeaningfulNumber(summary[key]);
             });
         }
 
@@ -834,7 +853,7 @@
             `).join("");
         }
 
-        function makePathFromSeries(series, width, height, accessor, minValue, maxValue, padding) {
+        function makePathFromSeries(series, width, height, accessor, minValue, maxValue, padding = { top: 16, right: 14, bottom: 28, left: 62 }) {
             if (!series.length) return "";
             const span = Math.max(maxValue - minValue, 1);
             const commands = [];
@@ -907,36 +926,42 @@
             `;
         }
 
-        function renderChart(series) {
-            const svg = document.getElementById("balanceChart");
+        function renderBalanceChart(series, svgId, metaId, accessor, strokeColor, emptyText) {
+            const svg = document.getElementById(svgId);
             if (!svg) return;
 
-            if (!series.length) {
-                svg.innerHTML = "<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#667062' font-size='16'>Пока нет данных runtime_events</text>";
-                setText("chartMeta", "0 точек");
+            const chartSeries = series.filter((item) => {
+                const value = accessor(item);
+                return value !== null && value !== undefined && !Number.isNaN(Number(value));
+            });
+
+            if (!chartSeries.length) {
+                svg.innerHTML = `<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#667062' font-size='16'>${emptyText}</text>`;
+                setText(metaId, "0 точек");
                 return;
             }
 
             const width = 800;
             const height = 290;
             const padding = { top: 16, right: 14, bottom: 28, left: 62 };
-            const session = series.map((item) => item.session_balance !== null ? Number(item.session_balance) : null);
-            const real = series.map((item) => item.account_balance !== null ? Number(item.account_balance) : null);
-            const all = session.concat(real).filter((item) => item !== null);
-            const minValue = Math.min(...all);
-            const maxValue = Math.max(...all);
-            const sessionPath = makePathFromSeries(series, width, height, (item) => item.session_balance, minValue, maxValue, padding);
-            const realPath = makePathFromSeries(series, width, height, (item) => item.account_balance, minValue, maxValue, padding);
+            const values = chartSeries.map((item) => Number(accessor(item)));
+            const minValue = Math.min(...values);
+            const maxValue = Math.max(...values);
+            const path = makePathFromSeries(chartSeries, width, height, accessor, minValue, maxValue, padding);
             const axes = areBalanceLabelsEnabled()
-                ? buildBalanceAxes(series, width, height, minValue, maxValue, padding)
+                ? buildBalanceAxes(chartSeries, width, height, minValue, maxValue, padding)
                 : "";
 
             svg.innerHTML = `
                 ${axes}
-                <path d="${sessionPath}" fill="none" stroke="#1f7a4d" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
-                <path d="${realPath}" fill="none" stroke="#2d6a8c" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
+                <path d="${path}" fill="none" stroke="${strokeColor}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>
             `;
-            setText("chartMeta", `${series.length} точек`);
+            setText(metaId, `${chartSeries.length} точек`);
+        }
+
+        function renderCharts(series) {
+            renderBalanceChart(series, "sessionBalanceChart", "sessionChartMeta", (item) => item.session_balance, "#1f7a4d", "Пока нет данных session balance");
+            renderBalanceChart(series, "realBalanceChart", "realChartMeta", (item) => item.account_balance, "#2d6a8c", "Пока нет данных real balance");
         }
 
         async function refresh() {
@@ -968,14 +993,14 @@
             renderBets(recentBets);
             renderRounds(recentRounds);
             chartState.balanceSeries = balanceSeries;
-            renderChart(chartState.balanceSeries);
+            renderCharts(chartState.balanceSeries);
         }
 
         async function boot() {
             const labelsToggle = document.getElementById("balanceLabelsToggle");
             if (labelsToggle) {
                 labelsToggle.addEventListener("change", () => {
-                    renderChart(chartState.balanceSeries || []);
+                    renderCharts(chartState.balanceSeries || []);
                 });
             }
 
