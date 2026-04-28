@@ -1464,28 +1464,91 @@
             });
         }
 
-        function getLatestSnapshot(snapshot) {
-            if (hasMeaningfulSnapshot(snapshot)) {
-                lastDataState.snapshot = snapshot;
-                return snapshot;
+        function isMeaningfulFieldValue(value) {
+            if (value === null || value === undefined) {
+                return false;
+            }
+            if (typeof value === "string") {
+                const trimmed = value.trim();
+                return trimmed !== "" && trimmed !== "-";
+            }
+            if (typeof value === "number") {
+                return Number.isFinite(value) && value !== 0;
+            }
+            if (Array.isArray(value)) {
+                return value.length > 0;
+            }
+            if (typeof value === "object") {
+                return Object.keys(value).length > 0;
+            }
+            return true;
+        }
+
+        function mergeMeaningfulObject(incoming, key, isMeaningfulObject) {
+            const previous = lastDataState[key] && typeof lastDataState[key] === "object" ? lastDataState[key] : {};
+            const source = incoming && typeof incoming === "object" ? incoming : {};
+            const merged = { ...previous };
+
+            Object.entries(source).forEach(([field, value]) => {
+                if (isMeaningfulFieldValue(value) || !(field in merged)) {
+                    merged[field] = value;
+                }
+            });
+
+            const hasPrevious = Object.keys(previous).length > 0;
+            const candidate = hasPrevious ? merged : source;
+            if (isMeaningfulObject(candidate)) {
+                lastDataState[key] = candidate;
+                return candidate;
             }
 
-            return lastDataState.snapshot || snapshot || {};
+            return hasPrevious ? previous : candidate;
+        }
+
+        function isValidBalancePoint(item) {
+            if (!item || typeof item !== "object") {
+                return false;
+            }
+            const hasSession = item.session_balance !== null && item.session_balance !== undefined && !Number.isNaN(Number(item.session_balance));
+            const hasAccount = item.account_balance !== null && item.account_balance !== undefined && !Number.isNaN(Number(item.account_balance));
+            return hasSession || hasAccount;
+        }
+
+        function isValidResultPoint(item) {
+            if (!item || typeof item !== "object") {
+                return false;
+            }
+            const points = [item.wins, item.losses, item.net, item.rolling20, item.rolling50];
+            return points.some((value) => value !== null && value !== undefined && !Number.isNaN(Number(value)));
+        }
+
+        function isValidBetItem(item) {
+            return !!item && typeof item === "object";
+        }
+
+        function isValidRoundItem(item) {
+            return !!item && typeof item === "object";
+        }
+
+        function isValidEventItem(item) {
+            return !!item && typeof item === "object";
+        }
+
+        function getLatestSnapshot(snapshot) {
+            return mergeMeaningfulObject(snapshot, "snapshot", hasMeaningfulSnapshot);
         }
 
         function getLatestSummary(summary) {
-            if (hasMeaningfulSummary(summary)) {
-                lastDataState.summary = summary;
-                return summary;
-            }
-
-            return lastDataState.summary || summary || {};
+            return mergeMeaningfulObject(summary, "summary", hasMeaningfulSummary);
         }
 
-        function getLatestArray(items, key) {
+        function getLatestArray(items, key, validator = null) {
             if (Array.isArray(items) && items.length > 0) {
-                lastDataState[key] = items;
-                return items;
+                const filtered = validator ? items.filter((entry) => validator(entry)) : items;
+                if (filtered.length > 0) {
+                    lastDataState[key] = filtered;
+                    return filtered;
+                }
             }
 
             return lastDataState[key] || [];
@@ -1528,6 +1591,28 @@
             return `${String(currentOutcome).toUpperCase()} ${snapshot.current_specifier || ""}`.trim();
         }
 
+        function renderCurrentTargetHtml(snapshot) {
+            const targetDie = parseTargetDie(formatTarget(snapshot));
+            if (!targetDie) {
+                return "-";
+            }
+            return renderDieHtml(targetDie.value, targetDie.tone);
+        }
+
+        function renderLastRoundResultHtml(snapshot) {
+            const resolvedPair = resolveDicePair(
+                snapshot?.last_round_red_value ?? snapshot?.last_red_value ?? snapshot?.red_value,
+                snapshot?.last_round_yellow_value ?? snapshot?.last_yellow_value ?? snapshot?.yellow_value,
+                [
+                    snapshot?.last_round_result,
+                    snapshot?.last_round_display,
+                    snapshot?.round_display,
+                    snapshot?.last_result_display,
+                ],
+            );
+            return renderResolvedDicePairHtml(resolvedPair);
+        }
+
         function formatPauseReason(reason) {
             const normalized = String(reason || "").trim().toLowerCase();
             if (!normalized) return "-";
@@ -1552,7 +1637,10 @@
 
         function renderSummary(snapshot, summary) {
             setText("strategyName", snapshot.strategy_display_name || "Нет активной стратегии");
-            setText("currentTarget", formatTarget(snapshot));
+            const currentTargetNode = document.getElementById("currentTarget");
+            if (currentTargetNode) {
+                currentTargetNode.innerHTML = renderCurrentTargetHtml(snapshot);
+            }
             setText("updatedAt", fmtDateTime(snapshot.updated_at));
             setText("freshnessState", summary.freshness_state ? (summary.freshness_state === "stale" ? "Stale" : "Fresh") : "-");
             setText("sessionBalance", fmtMoney(summary.session_balance));
@@ -1577,25 +1665,26 @@
             const rail = document.getElementById("summaryRail");
             rail.innerHTML = "";
             const rows = [
-                ["Ставок в текущей сессии", fmtInteger(summary.session_total_bets)],
-                ["Всего ставок в БД", fmtInteger(summary.all_time_bets)],
-                ["Всего раундов в БД", fmtInteger(summary.all_time_rounds)],
-                ["Победы / проигрыши", fmtPair(summary.wins, summary.losses)],
-                ["Win rate", fmtNumber(summary.win_rate)],
-                ["Freshness", summary.freshness_state || "-"],
-                ["Reconciliation", summary.reconciliation_phase || "-"],
-                ["Последний round result", snapshot.last_round_result || "-"],
-                ["Последний SET status", snapshot.last_set_status || "-"],
-                ["Последний SET error", snapshot.last_set_error || "-"],
-                ["Причина паузы", pauseReasonLabel],
+                { label: "Ставок в текущей сессии", value: fmtInteger(summary.session_total_bets) },
+                { label: "Всего ставок в БД", value: fmtInteger(summary.all_time_bets) },
+                { label: "Всего раундов в БД", value: fmtInteger(summary.all_time_rounds) },
+                { label: "Победы / проигрыши", value: fmtPair(summary.wins, summary.losses) },
+                { label: "Win rate", value: fmtNumber(summary.win_rate) },
+                { label: "Freshness", value: summary.freshness_state || "-" },
+                { label: "Reconciliation", value: summary.reconciliation_phase || "-" },
+                { label: "Последний round result", value: renderLastRoundResultHtml(snapshot), isHtml: true },
+                { label: "Последний SET status", value: snapshot.last_set_status || "-" },
+                { label: "Последний SET error", value: snapshot.last_set_error || "-" },
+                { label: "Причина паузы", value: pauseReasonLabel },
             ];
 
-            rows.forEach(([label, value]) => {
+            rows.forEach((row) => {
                 const item = document.createElement("div");
                 item.className = "event-item";
+                const valueMarkup = row.isHtml ? (row.value || "-") : escapeHtml(row.value ?? "-");
                 item.innerHTML = `
-                    <div class="event-type">${escapeHtml(label)}</div>
-                    <div class="event-main">${escapeHtml(value ?? "-")}</div>
+                    <div class="event-type">${escapeHtml(row.label)}</div>
+                    <div class="event-main">${valueMarkup}</div>
                     <div class="event-extra"></div>
                 `;
                 rail.appendChild(item);
@@ -1864,23 +1953,25 @@
                 chartsResponse.json(),
             ]);
 
-            const snapshot = getLatestSnapshot(statusData.snapshot);
-            const summary = getLatestSummary(statusData.summary);
-            const recentBets = getLatestArray(historyData.recent_bets, "recentBets");
-            const recentRounds = getLatestArray(historyData.recent_rounds, "recentRounds");
-            const recentEvents = getLatestArray(historyData.recent_events, "recentEvents");
-            const balanceSeries = getLatestArray(chartData.balance_series, "balanceSeries");
-            const resultCurve = getLatestArray(chartData.result_curve, "resultCurve");
+            const effectivePayload = {
+                snapshot: getLatestSnapshot(statusData?.snapshot),
+                summary: getLatestSummary(statusData?.summary),
+                recentBets: getLatestArray(historyData?.recent_bets, "recentBets", isValidBetItem),
+                recentRounds: getLatestArray(historyData?.recent_rounds, "recentRounds", isValidRoundItem),
+                recentEvents: getLatestArray(historyData?.recent_events, "recentEvents", isValidEventItem),
+                balanceSeries: getLatestArray(chartData?.balance_series, "balanceSeries", isValidBalancePoint),
+                resultCurve: getLatestArray(chartData?.result_curve, "resultCurve", isValidResultPoint),
+            };
 
-            renderSummary(snapshot, summary);
-            renderBets(recentBets);
-            renderRounds(recentRounds);
-            renderEvents(recentEvents);
-            chartState.balanceSeries = balanceSeries;
+            renderSummary(effectivePayload.snapshot, effectivePayload.summary);
+            renderBets(effectivePayload.recentBets);
+            renderRounds(effectivePayload.recentRounds);
+            renderEvents(effectivePayload.recentEvents);
+            chartState.balanceSeries = effectivePayload.balanceSeries;
             renderCharts(chartState.balanceSeries);
-            renderResultsChart(resultCurve);
-            renderNetChart(resultCurve);
-            renderRollingChart(resultCurve);
+            renderResultsChart(effectivePayload.resultCurve);
+            renderNetChart(effectivePayload.resultCurve);
+            renderRollingChart(effectivePayload.resultCurve);
             maybeCelebrateWin(resolveLatestWin(statusData));
             markRefreshCompleted();
         }
