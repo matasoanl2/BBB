@@ -197,6 +197,8 @@ def _clear_low_balance_pause_state(betting_state: dict) -> None:
     betting_state["low_balance_pause_reason"] = None
     betting_state["low_balance_pause_started_at"] = None
     betting_state["low_balance_pause_targets"] = []
+    betting_state["target_balance_pause_last_check_at"] = None
+    betting_state["target_balance_pause_last_observed_balance"] = None
 
 
 def _set_low_balance_pause_state(
@@ -364,9 +366,60 @@ async def place_bets(
         available_balance = _normalize_account_balance(betting_state.get("account_balance"))
         was_low_balance_paused = bool(betting_state.get("low_balance_pause_active"))
         stop_at_balance = float(getattr(betting_config, "stop_at_balance", 0.0) or 0.0)
+        stop_at_balance_resume_check_seconds = float(
+            getattr(betting_config, "stop_at_balance_resume_check_seconds", 300.0) or 300.0
+        )
 
         if str(betting_state.get("low_balance_pause_reason") or "") == "target_balance_reached":
-            return False
+            now_utc = datetime.now(timezone.utc)
+            last_check_raw = betting_state.get("target_balance_pause_last_check_at")
+            last_observed_balance = _normalize_account_balance(
+                betting_state.get("target_balance_pause_last_observed_balance")
+            )
+            if last_observed_balance is None and available_balance is not None:
+                last_observed_balance = available_balance
+
+            check_due = True
+            if isinstance(last_check_raw, str) and last_check_raw:
+                try:
+                    last_check_at = datetime.fromisoformat(last_check_raw)
+                    check_due = (now_utc - last_check_at).total_seconds() >= stop_at_balance_resume_check_seconds
+                except ValueError:
+                    check_due = True
+
+            if not check_due:
+                return False
+
+            betting_state["target_balance_pause_last_check_at"] = now_utc.isoformat()
+
+            if available_balance is None:
+                return False
+
+            if last_observed_balance is not None and available_balance < last_observed_balance:
+                _clear_low_balance_pause_state(betting_state)
+                betting_state["current_step"] = 0
+                betting_state["last_set_status"] = "resumed_after_target_balance_drop"
+                betting_state["last_set_error"] = (
+                    f"Возобновление: real balance снизился {last_observed_balance:.0f}р -> {available_balance:.0f}р, продолжаем с шага 1"
+                )
+                _print_bet_system_log(
+                    runtime_config=runtime_config,
+                    event="set_resume_after_target_balance_drop",
+                    level="info",
+                    message="[SET-RESUME] После снижения real balance возобновляем ставки с первого шага.",
+                    extra={
+                        "previous_balance": last_observed_balance,
+                        "current_balance": available_balance,
+                        "check_interval_seconds": stop_at_balance_resume_check_seconds,
+                    },
+                )
+            else:
+                betting_state["target_balance_pause_last_observed_balance"] = available_balance
+                betting_state["last_set_status"] = "paused_target_balance"
+                betting_state["last_set_error"] = (
+                    f"Пауза: real balance {available_balance:.0f}р не снизился; повторная проверка через {int(stop_at_balance_resume_check_seconds // 60)} мин"
+                )
+                return False
 
         if stop_at_balance > 0 and available_balance is not None and available_balance >= stop_at_balance:
             pause_changed = _set_low_balance_pause_state(
@@ -375,6 +428,9 @@ async def place_bets(
                 bet_targets=normalized_targets,
                 reason="target_balance_reached",
             )
+            now_utc = datetime.now(timezone.utc)
+            betting_state["target_balance_pause_last_check_at"] = now_utc.isoformat()
+            betting_state["target_balance_pause_last_observed_balance"] = available_balance
             betting_state["last_bet_amount"] = 0.0
             betting_state["last_set_amount"] = 0.0
             betting_state["last_set_status"] = "paused_target_balance"

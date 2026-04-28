@@ -102,6 +102,29 @@
             background: var(--panel-strong);
         }
 
+        .status-box.refresh-progress {
+            position: relative;
+            overflow: hidden;
+            isolation: isolate;
+            --refresh-progress: 0%;
+        }
+
+        .status-box.refresh-progress::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            width: var(--refresh-progress);
+            background: linear-gradient(90deg, rgba(45, 106, 140, 0.18), rgba(31, 122, 77, 0.16));
+            transition: width 160ms linear;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .status-box.refresh-progress > * {
+            position: relative;
+            z-index: 1;
+        }
+
         .status-box label {
             display: block;
             margin-bottom: 6px;
@@ -331,6 +354,87 @@
 
         tr:last-child td { border-bottom: none; }
 
+        .dice-pair {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: nowrap;
+        }
+
+        .die-shell {
+            display: inline-flex;
+            align-items: center;
+            gap: 0;
+        }
+
+        .die-body {
+            position: relative;
+            width: 34px;
+            height: 34px;
+            border-radius: 10px;
+            border: 1px solid rgba(31, 36, 29, 0.18);
+            box-shadow:
+                inset 0 1px 0 rgba(255, 255, 255, 0.88),
+                inset 0 -2px 6px rgba(31, 36, 29, 0.08),
+                0 5px 12px rgba(55, 46, 29, 0.14);
+            overflow: hidden;
+        }
+
+        .die-red {
+            background: linear-gradient(180deg, rgba(250, 228, 222, 0.98), rgba(241, 186, 171, 0.92));
+            border-color: rgba(182, 68, 50, 0.34);
+        }
+
+        .die-yellow {
+            background: linear-gradient(180deg, rgba(253, 244, 216, 0.98), rgba(245, 219, 144, 0.92));
+            border-color: rgba(187, 122, 34, 0.38);
+        }
+
+        .die-face {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+            gap: 2px;
+            width: 100%;
+            height: 100%;
+            padding: 5px;
+        }
+
+        .die-pip {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            align-self: center;
+            justify-self: center;
+        }
+
+        .die-red .die-pip {
+            background: #7a2218;
+        }
+
+        .die-yellow .die-pip {
+            background: #694707;
+        }
+
+        .die-missing {
+            background: linear-gradient(180deg, rgba(238, 239, 235, 0.95), rgba(219, 222, 213, 0.92));
+            border-color: rgba(114, 122, 106, 0.35);
+        }
+
+        .die-missing .die-pip {
+            opacity: 0;
+        }
+
+        .p1 { grid-column: 1; grid-row: 1; }
+        .p2 { grid-column: 2; grid-row: 1; }
+        .p3 { grid-column: 3; grid-row: 1; }
+        .p4 { grid-column: 1; grid-row: 2; }
+        .p5 { grid-column: 2; grid-row: 2; }
+        .p6 { grid-column: 3; grid-row: 2; }
+        .p7 { grid-column: 1; grid-row: 3; }
+        .p8 { grid-column: 2; grid-row: 3; }
+        .p9 { grid-column: 3; grid-row: 3; }
+
         .mono {
             font-family: "Consolas", "Courier New", monospace;
         }
@@ -405,6 +509,16 @@
             .status-strip {
                 grid-template-columns: 1fr;
             }
+
+            .die-body {
+                width: 32px;
+                height: 32px;
+            }
+
+            .die-pip {
+                width: 5px;
+                height: 5px;
+            }
         }
     </style>
 </head>
@@ -429,7 +543,7 @@
                         <label>Цель</label>
                         <div class="value" id="currentTarget">-</div>
                     </div>
-                    <div class="status-box">
+                    <div class="status-box refresh-progress" id="updatedAtBox">
                         <label>Последнее обновление</label>
                         <div class="value mono" id="updatedAt">-</div>
                     </div>
@@ -445,7 +559,7 @@
         <section class="metrics-grid">
             <div class="panel metric-card metric-green">
                 <div class="label">Session Balance</div>
-                <div class="metric" id="sessionBalance">0р</div>
+                <div class="metric" id="sessionBalance">-</div>
                 <div class="sub">Расчётный баланс текущей сессии</div>
             </div>
             <div class="panel metric-card metric-blue">
@@ -460,7 +574,7 @@
             </div>
             <div class="panel metric-card metric-red">
                 <div class="label">Loss Streak</div>
-                <div class="metric" id="lossStreak">0</div>
+                <div class="metric" id="lossStreak">-</div>
                 <div class="sub">Подряд проигранных результатов</div>
             </div>
             <div class="panel metric-card metric-amber">
@@ -470,7 +584,7 @@
             </div>
             <div class="panel metric-card metric-amber">
                 <div class="label">Всего ставок</div>
-                <div class="metric" id="sessionTotalBets">0</div>
+                <div class="metric" id="sessionTotalBets">-</div>
                 <div class="sub">Текущая сессия</div>
             </div>
         </section>
@@ -483,25 +597,16 @@
                         <div class="section-note">Session и real balance из runtime_events на отдельных графиках</div>
                     </div>
                     <div class="chart-controls">
-                        <label class="labels-toggle">
-                            <input type="checkbox" id="balanceLabelsToggle" checked>
-                            Подписи
-                        </label>
                         <div class="section-note" id="sessionChartMeta">0 точек</div>
                     </div>
                 </div>
                 <div class="chart-shell">
-                    <div class="section-note" style="margin-bottom: 6px;">Session balance</div>
                     <svg id="sessionBalanceChart" viewBox="0 0 800 290" preserveAspectRatio="none"></svg>
                 </div>
                 <div class="chart-shell" style="margin-top: 12px;">
-                    <div class="section-note" style="margin-bottom: 6px;">Real balance</div>
                     <svg id="realBalanceChart" viewBox="0 0 800 290" preserveAspectRatio="none"></svg>
                 </div>
-                <div class="legend">
-                    <span class="session">Session balance</span>
-                    <span class="real" id="realChartMeta">0 точек</span>
-                </div>
+                <div class="section-note" id="realChartMeta" style="margin-top: 10px; text-align: right;">0 точек</div>
             </div>
 
             <div class="panel summary-panel">
@@ -567,6 +672,12 @@
             balanceSeries: [],
         };
 
+        const refreshState = {
+            intervalMs: 5000,
+            nextRefreshAt: null,
+            timerId: null,
+        };
+
         const lastDataState = {
             snapshot: null,
             summary: null,
@@ -587,6 +698,20 @@
             const number = Number(value);
             if (Number.isNaN(number)) return "-";
             return `${number.toFixed(1)}%`;
+        };
+
+        const fmtInteger = (value) => {
+            if (value === null || value === undefined || value === "") return "-";
+            const number = Number(value);
+            if (Number.isNaN(number)) return "-";
+            return String(Math.trunc(number));
+        };
+
+        const fmtPair = (left, right) => {
+            if ((left === null || left === undefined || left === "") && (right === null || right === undefined || right === "")) {
+                return "-";
+            }
+            return `${fmtInteger(left)} / ${fmtInteger(right)}`;
         };
 
         const fmtDateTime = (value) => {
@@ -626,6 +751,39 @@
             if (node) node.textContent = value;
         }
 
+        function setRefreshProgress(value) {
+            const node = document.getElementById("updatedAtBox");
+            if (!node) {
+                return;
+            }
+            const clamped = Math.max(0, Math.min(1, Number(value) || 0));
+            node.style.setProperty("--refresh-progress", `${(clamped * 100).toFixed(2)}%`);
+        }
+
+        function renderRefreshProgress() {
+            if (refreshState.nextRefreshAt === null) {
+                setRefreshProgress(0);
+                return;
+            }
+
+            const remainingMs = Math.max(0, refreshState.nextRefreshAt - Date.now());
+            const elapsedRatio = 1 - (remainingMs / refreshState.intervalMs);
+            setRefreshProgress(elapsedRatio);
+        }
+
+        function markRefreshCompleted() {
+            refreshState.nextRefreshAt = Date.now() + refreshState.intervalMs;
+            renderRefreshProgress();
+        }
+
+        function startRefreshTimer() {
+            renderRefreshProgress();
+            if (refreshState.timerId !== null) {
+                window.clearInterval(refreshState.timerId);
+            }
+            refreshState.timerId = window.setInterval(renderRefreshProgress, 200);
+        }
+
         function escapeHtml(value) {
             return String(value ?? "-")
                 .replaceAll("&", "&amp;")
@@ -633,6 +791,139 @@
                 .replaceAll(">", "&gt;")
                 .replaceAll('"', "&quot;")
                 .replaceAll("'", "&#39;");
+        }
+
+        function hasDieValue(value) {
+            return value !== undefined && value !== null && value !== "";
+        }
+
+        function normalizeDieValue(value) {
+            const parsed = Number.parseInt(value, 10);
+            if (!Number.isFinite(parsed) || parsed < 1 || parsed > 6) {
+                return null;
+            }
+            return parsed;
+        }
+
+        const DIE_PIP_POSITIONS = {
+            1: [5],
+            2: [1, 9],
+            3: [1, 5, 9],
+            4: [1, 3, 7, 9],
+            5: [1, 3, 5, 7, 9],
+            6: [1, 3, 4, 6, 7, 9],
+        };
+
+        function renderDieHtml(value, tone) {
+            const normalizedValue = normalizeDieValue(value);
+            const marker = normalizedValue === null ? "-" : String(normalizedValue);
+            const pipHtml = normalizedValue === null
+                ? ""
+                : DIE_PIP_POSITIONS[normalizedValue].map((position) => `<span class="die-pip p${position}" aria-hidden="true"></span>`).join("");
+            const toneLabel = tone === "red" ? "красный" : "желтый";
+
+            return `
+                <span class="die-shell">
+                    <span class="die-body die-${tone}${normalizedValue === null ? " die-missing" : ""}" role="img" aria-label="${escapeHtml(`${toneLabel} кубик ${marker}`)}">
+                        <span class="die-face">${pipHtml}</span>
+                    </span>
+                </span>
+            `;
+        }
+
+        function renderDicePairHtml(redValue, yellowValue) {
+            return `<span class="dice-pair">${renderDieHtml(redValue, "red")}${renderDieHtml(yellowValue, "yellow")}</span>`;
+        }
+
+        function parseToneValueFromText(text, tone) {
+            if (typeof text !== "string" || text.trim() === "") {
+                return null;
+            }
+
+            const forwardMatch = text.match(new RegExp(`\\b${tone}\\b\\s*[:=\\-/]?\\s*([1-6])\\b`, "i"));
+            if (forwardMatch && forwardMatch[1]) {
+                return normalizeDieValue(forwardMatch[1]);
+            }
+
+            const backwardMatch = text.match(new RegExp(`\\b([1-6])\\b\\s*[:=\\-/]?\\s*\\b${tone}\\b`, "i"));
+            if (backwardMatch && backwardMatch[1]) {
+                return normalizeDieValue(backwardMatch[1]);
+            }
+
+            return null;
+        }
+
+        function resolveDicePair(redValue, yellowValue, textCandidates = []) {
+            const resolved = {
+                redValue: normalizeDieValue(redValue),
+                yellowValue: normalizeDieValue(yellowValue),
+            };
+
+            for (const candidate of textCandidates) {
+                if (resolved.redValue !== null && resolved.yellowValue !== null) {
+                    break;
+                }
+                if (typeof candidate !== "string" || candidate.trim() === "") {
+                    continue;
+                }
+
+                if (resolved.redValue === null) {
+                    resolved.redValue = parseToneValueFromText(candidate, "RED");
+                }
+                if (resolved.yellowValue === null) {
+                    resolved.yellowValue = parseToneValueFromText(candidate, "YELLOW");
+                }
+            }
+
+            return resolved;
+        }
+
+        function renderResolvedDicePairHtml(resolvedPair) {
+            if (!resolvedPair || (resolvedPair.redValue === null && resolvedPair.yellowValue === null)) {
+                return "-";
+            }
+
+            const knownDiceHtml = [];
+            if (resolvedPair.redValue !== null) {
+                knownDiceHtml.push(renderDieHtml(resolvedPair.redValue, "red"));
+            }
+            if (resolvedPair.yellowValue !== null) {
+                knownDiceHtml.push(renderDieHtml(resolvedPair.yellowValue, "yellow"));
+            }
+
+            return `<span class="dice-pair">${knownDiceHtml.join("")}</span>`;
+        }
+
+        function parseTargetDie(targetText) {
+            const redValue = parseToneValueFromText(targetText, "RED");
+            const yellowValue = parseToneValueFromText(targetText, "YELLOW");
+
+            if (redValue !== null && yellowValue === null) {
+                return { tone: "red", value: redValue };
+            }
+            if (yellowValue !== null && redValue === null) {
+                return { tone: "yellow", value: yellowValue };
+            }
+
+            return null;
+        }
+
+        function renderBetTargetHtml(bet) {
+            const targetDie = parseTargetDie(bet?.target);
+            if (!targetDie) {
+                return "-";
+            }
+            return renderDieHtml(targetDie.value, targetDie.tone);
+        }
+
+        function renderDiceDisplayHtml(round) {
+            const resolvedPair = resolveDicePair(round?.red_value, round?.yellow_value, [round?.display]);
+            return renderResolvedDicePairHtml(resolvedPair);
+        }
+
+        function renderBetResultHtml(bet) {
+            const resolvedPair = resolveDicePair(bet?.red_value, bet?.yellow_value, [bet?.result, bet?.display]);
+            return renderResolvedDicePairHtml(resolvedPair);
         }
 
         function hasMeaningfulNumber(value) {
@@ -775,18 +1066,20 @@
             setText("strategyName", snapshot.strategy_display_name || "Нет активной стратегии");
             setText("currentTarget", formatTarget(snapshot));
             setText("updatedAt", fmtDateTime(snapshot.updated_at));
-            setText("freshnessState", summary.freshness_state === "stale" ? "Stale" : "Fresh");
+            setText("freshnessState", summary.freshness_state ? (summary.freshness_state === "stale" ? "Stale" : "Fresh") : "-");
             setText("sessionBalance", fmtMoney(summary.session_balance));
             setText("realBalance", fmtMoney(summary.account_balance));
             setText("stepLabel", summary.step_label || "-");
-            setText("lossStreak", String(summary.consecutive_losses || 0));
+            setText("lossStreak", fmtInteger(summary.consecutive_losses));
             setText("winRate", fmtNumber(summary.win_rate));
-            setText("sessionTotalBets", String(summary.session_total_bets || 0));
+            setText("sessionTotalBets", fmtInteger(summary.session_total_bets));
 
             if (summary.freshness_state === "stale") {
                 renderAlert("Accounting balance устарел или поток данных деградировал", "warn");
             } else if (snapshot.last_set_error) {
                 renderAlert(`Последняя ошибка SET: ${snapshot.last_set_error}`, "warn");
+            } else if (!summary.freshness_state && !snapshot.updated_at) {
+                renderAlert("Ожидание данных dashboard");
             } else {
                 renderAlert("Нет активных предупреждений");
             }
@@ -795,11 +1088,11 @@
             if (!rail) return;
 
             const rows = [
-                ["Всего ставок в БД", summary.all_time_bets],
-                ["Всего раундов в БД", summary.all_time_rounds],
-                ["Победы / проигрыши", `${summary.wins} / ${summary.losses}`],
+                ["Всего ставок в БД", fmtInteger(summary.all_time_bets)],
+                ["Всего раундов в БД", fmtInteger(summary.all_time_rounds)],
+                ["Победы / проигрыши", fmtPair(summary.wins, summary.losses)],
                 ["Балансовый delta", fmtMoney(summary.balance_delta)],
-                ["Reconciliation", summary.reconciliation_phase || "idle"],
+                ["Reconciliation", summary.reconciliation_phase || "-"],
                 ["Последний SET status", snapshot.last_set_status || "-"],
                 ["Последний round result", snapshot.last_round_result || "-"],
                 ["Выводы", fmtMoney(summary.withdrawals_total)],
@@ -825,11 +1118,11 @@
             body.innerHTML = bets.map((bet) => `
                 <tr>
                     <td class="mono">${fmtShortTime(bet.timestamp)}</td>
-                    <td>${escapeHtml(bet.target || "-")}</td>
+                    <td>${renderBetTargetHtml(bet)}</td>
                     <td>${escapeHtml(bet.step || "-")}</td>
                     <td>${fmtMoney(bet.amount)}</td>
                     <td><span class="${statusClass(bet.status)}">${escapeHtml(bet.status || "-")}</span></td>
-                    <td>${escapeHtml(bet.result || "-")}</td>
+                    <td>${renderBetResultHtml(bet)}</td>
                 </tr>
             `).join("");
         }
@@ -848,7 +1141,7 @@
                     <td class="mono">${fmtShortTime(round.timestamp)}</td>
                     <td>${escapeHtml(round.player_name || "unknown")}</td>
                     <td>${escapeHtml(round.position || "-")}</td>
-                    <td>${escapeHtml(round.display || "-")}</td>
+                    <td>${renderDiceDisplayHtml(round)}</td>
                 </tr>
             `).join("");
         }
@@ -880,11 +1173,6 @@
             const date = new Date(value);
             if (Number.isNaN(date.getTime())) return "-";
             return date.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-        }
-
-        function areBalanceLabelsEnabled() {
-            const toggle = document.getElementById("balanceLabelsToggle");
-            return !toggle || toggle.checked;
         }
 
         function buildBalanceAxes(series, width, height, minValue, maxValue, padding) {
@@ -948,9 +1236,7 @@
             const minValue = Math.min(...values);
             const maxValue = Math.max(...values);
             const path = makePathFromSeries(chartSeries, width, height, accessor, minValue, maxValue, padding);
-            const axes = areBalanceLabelsEnabled()
-                ? buildBalanceAxes(chartSeries, width, height, minValue, maxValue, padding)
-                : "";
+            const axes = buildBalanceAxes(chartSeries, width, height, minValue, maxValue, padding);
 
             svg.innerHTML = `
                 ${axes}
@@ -994,16 +1280,11 @@
             renderRounds(recentRounds);
             chartState.balanceSeries = balanceSeries;
             renderCharts(chartState.balanceSeries);
+            markRefreshCompleted();
         }
 
         async function boot() {
-            const labelsToggle = document.getElementById("balanceLabelsToggle");
-            if (labelsToggle) {
-                labelsToggle.addEventListener("change", () => {
-                    renderCharts(chartState.balanceSeries || []);
-                });
-            }
-
+            startRefreshTimer();
             try {
                 await refresh();
             } catch (error) {
@@ -1018,7 +1299,7 @@
                     console.error(error);
                     renderAlert(`Ошибка обновления dashboard: ${error.message}`, "error");
                 }
-            }, 5000);
+            }, refreshState.intervalMs);
         }
 
         boot();

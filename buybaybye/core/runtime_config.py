@@ -108,6 +108,7 @@ class BettingConfig:
     default_specifier: str
     base_bet: float
     stop_at_balance: float
+    stop_at_balance_resume_check_seconds: float
     strategy_name: str
     bet_delay_min: float
     bet_delay_max: float
@@ -199,6 +200,8 @@ def validate_runtime_config(config: RuntimeConfig) -> None:
         raise ValueError("[ERROR] BASE_BET должен быть положительным числом.")
     if config.betting.stop_at_balance < 0:
         raise ValueError("[ERROR] STOP_AT_BALANCE не может быть отрицательным.")
+    if config.betting.stop_at_balance_resume_check_seconds <= 0:
+        raise ValueError("[ERROR] STOP_AT_BALANCE_RESUME_CHECK_SECONDS должен быть больше 0.")
     if config.betting.bet_delay_min < 0 or config.betting.bet_delay_max < 0:
         raise ValueError("[ERROR] BET_DELAY_MIN и BET_DELAY_MAX не могут быть отрицательными.")
     if config.betting.bet_delay_min > config.betting.bet_delay_max:
@@ -305,6 +308,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             default_specifier=first_specifier,
             base_bet=float(os.getenv("BASE_BET", "10")),
             stop_at_balance=float(os.getenv("STOP_AT_BALANCE", "0")),
+            stop_at_balance_resume_check_seconds=float(os.getenv("STOP_AT_BALANCE_RESUME_CHECK_SECONDS", "300")),
             strategy_name=os.getenv("STRATEGY", "balanced"),
             bet_delay_min=float(os.getenv("BET_DELAY_MIN", "0.8")),
             bet_delay_max=float(os.getenv("BET_DELAY_MAX", "1.5")),

@@ -287,6 +287,64 @@ def _select_runtime_event_rows(limit: int, preferred_role: str | None = None, co
     return filtered_rows, selected_role
 
 
+def _select_balance_session_event_rows(preferred_role: str | None = None, conn=None) -> tuple[list[dict[str, Any]], str | None]:
+    """Выбрать runtime events за всю текущую сессию (от последнего startup)."""
+
+    selected_role = preferred_role
+    if selected_role is None:
+        latest_role_row = _fetch_one(
+            """
+            SELECT payload
+            FROM runtime_events
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            conn=conn,
+        )
+        selected_role = _extract_runtime_role((latest_role_row or {}).get("payload") or {})
+
+    startup_query = """
+        SELECT id
+        FROM runtime_events
+        WHERE event_type = 'startup'
+    """
+    startup_params: tuple[Any, ...] = ()
+    if selected_role:
+        startup_query += " AND payload->>'runtime_role' = %s"
+        startup_params = (selected_role,)
+    startup_query += " ORDER BY id DESC LIMIT 1"
+
+    startup_row = _fetch_one(startup_query, startup_params, conn=conn)
+    startup_id = startup_row.get("id") if startup_row else None
+
+    rows_query = """
+        SELECT id, timestamp, event_type, payload
+        FROM runtime_events
+        WHERE 1 = 1
+    """
+    rows_params: list[Any] = []
+
+    if startup_id is not None:
+        rows_query += " AND id >= %s"
+        rows_params.append(startup_id)
+    if selected_role:
+        rows_query += " AND payload->>'runtime_role' = %s"
+        rows_params.append(selected_role)
+
+    rows_query += " ORDER BY id ASC"
+    rows = _fetch_all(rows_query, tuple(rows_params), conn=conn)
+
+    annotated_rows = []
+    for row in rows:
+        payload = row.get("payload") or {}
+        annotated = dict(row)
+        annotated["payload"] = payload
+        annotated["runtime_role"] = _extract_runtime_role(payload)
+        annotated_rows.append(annotated)
+
+    return annotated_rows, selected_role
+
+
 def _parse_round(row: dict[str, Any]) -> dict[str, Any]:
     """Преобразовать строку game_results в сериализованное представление раунда."""
 
@@ -512,10 +570,10 @@ def _get_recent_rounds(limit: int = 20, conn=None) -> list[dict[str, Any]]:
     return [_parse_round(row) for row in rows]
 
 
-def _get_balance_series(limit: int = 160, preferred_role: str | None = None, conn=None) -> list[dict[str, Any]]:
-    """Построить временной ряд balance по согласованному потоку runtime events."""
+def _get_balance_series(preferred_role: str | None = None, conn=None) -> list[dict[str, Any]]:
+    """Построить временной ряд balance за всю текущую runtime-сессию."""
 
-    rows, selected_role = _select_runtime_event_rows(limit=limit, preferred_role=preferred_role, conn=conn)
+    rows, selected_role = _select_balance_session_event_rows(preferred_role=preferred_role, conn=conn)
     result = []
     for row in rows:
         payload = row.get("payload") or {}
