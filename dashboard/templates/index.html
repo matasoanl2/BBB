@@ -1058,7 +1058,7 @@
     <script>
         const BLOOD_MODE_STORAGE_KEY = "bbb.dashboard.bloodModeEnabled";
         const BLOOD_FILL_STARTED_AT_KEY = "bbb.dashboard.bloodFillStartedAt";
-        const BLOOD_FILL_DURATION_MS = 30000;
+        const BLOOD_FILL_DURATION_MS = 300000;
 
         function readLocalStorageBoolean(key, defaultValue) {
             try {
@@ -1983,20 +1983,25 @@
             const plotWidth = width - padding.left - padding.right;
             const plotHeight = height - padding.top - padding.bottom;
             const axisY = height - padding.bottom;
-            const fillHeight = Math.max(6, plotHeight * clampedProgress);
+            const midX = padding.left + (plotWidth / 2);
+            const horizontalSpread = Math.min(1, 0.14 + clampedProgress * 1.18);
+            const halfWidth = Math.max(12, (plotWidth / 2) * horizontalSpread);
+            const leftX = Math.max(padding.left, midX - halfWidth);
+            const rightX = Math.min(width - padding.right, midX + halfWidth);
+            const fillHeight = Math.max(8, plotHeight * Math.pow(clampedProgress, 0.92));
             const fillY = Math.max(padding.top, axisY - fillHeight);
-            const leftX = padding.left;
-            const rightX = width - padding.right;
-            const midX = leftX + (plotWidth / 2);
-            const waveLift = 4 + (clampedProgress * 7);
+            const waveLift = 3 + (clampedProgress * 6);
+            const innerWaveLift = 2 + (clampedProgress * 4.2);
+            const inletWidth = Math.max(18, halfWidth * 0.22);
 
             return `
                 <g clip-path="url(#bloodPlotClip-${svgId})">
-                    <rect x="${leftX.toFixed(2)}" y="${fillY.toFixed(2)}" width="${plotWidth.toFixed(2)}" height="${fillHeight.toFixed(2)}" fill="url(#bloodFloodGradient-${svgId})" opacity="${(0.28 + clampedProgress * 0.42).toFixed(2)}"></rect>
-                    <path d="M ${leftX.toFixed(2)} ${fillY.toFixed(2)} C ${(leftX + plotWidth * 0.22).toFixed(2)} ${(fillY - waveLift).toFixed(2)} ${(midX - plotWidth * 0.12).toFixed(2)} ${(fillY + waveLift * 0.4).toFixed(2)} ${midX.toFixed(2)} ${(fillY - waveLift * 0.5).toFixed(2)} C ${(midX + plotWidth * 0.18).toFixed(2)} ${(fillY + waveLift).toFixed(2)} ${(rightX - plotWidth * 0.16).toFixed(2)} ${(fillY - waveLift * 0.35).toFixed(2)} ${rightX.toFixed(2)} ${fillY.toFixed(2)} L ${rightX.toFixed(2)} ${axisY.toFixed(2)} L ${leftX.toFixed(2)} ${axisY.toFixed(2)} Z" fill="rgba(149, 12, 12, 0.68)">
+                    <path d="M ${leftX.toFixed(2)} ${axisY.toFixed(2)} C ${leftX.toFixed(2)} ${(axisY - fillHeight * 0.28).toFixed(2)} ${(midX - inletWidth).toFixed(2)} ${(fillY + innerWaveLift).toFixed(2)} ${midX.toFixed(2)} ${(fillY - waveLift).toFixed(2)} C ${(midX + inletWidth).toFixed(2)} ${(fillY + innerWaveLift).toFixed(2)} ${rightX.toFixed(2)} ${(axisY - fillHeight * 0.28).toFixed(2)} ${rightX.toFixed(2)} ${axisY.toFixed(2)} Z" fill="url(#bloodFloodGradient-${svgId})" opacity="${(0.52 + clampedProgress * 0.24).toFixed(2)}"></path>
+                    <path d="M ${leftX.toFixed(2)} ${axisY.toFixed(2)} C ${(leftX + halfWidth * 0.16).toFixed(2)} ${(axisY - fillHeight * 0.46).toFixed(2)} ${(midX - halfWidth * 0.28).toFixed(2)} ${(fillY + waveLift * 0.65).toFixed(2)} ${midX.toFixed(2)} ${(fillY - waveLift).toFixed(2)} C ${(midX + halfWidth * 0.28).toFixed(2)} ${(fillY + waveLift * 0.65).toFixed(2)} ${(rightX - halfWidth * 0.16).toFixed(2)} ${(axisY - fillHeight * 0.46).toFixed(2)} ${rightX.toFixed(2)} ${axisY.toFixed(2)} L ${rightX.toFixed(2)} ${axisY.toFixed(2)} L ${leftX.toFixed(2)} ${axisY.toFixed(2)} Z" fill="rgba(102, 0, 0, 0.72)">
                         <animateTransform attributeName="transform" type="translate" values="0 0;0 -2;0 0" dur="4.4s" repeatCount="indefinite"></animateTransform>
                     </path>
-                    <path d="M ${leftX.toFixed(2)} ${(fillY + 2).toFixed(2)} C ${(leftX + plotWidth * 0.26).toFixed(2)} ${(fillY - waveLift * 0.35).toFixed(2)} ${(midX - plotWidth * 0.1).toFixed(2)} ${(fillY + waveLift * 0.18).toFixed(2)} ${midX.toFixed(2)} ${(fillY - waveLift * 0.18).toFixed(2)} C ${(midX + plotWidth * 0.17).toFixed(2)} ${(fillY + waveLift * 0.52).toFixed(2)} ${(rightX - plotWidth * 0.18).toFixed(2)} ${(fillY - waveLift * 0.24).toFixed(2)} ${rightX.toFixed(2)} ${(fillY + 2).toFixed(2)}" fill="none" stroke="rgba(255, 146, 146, 0.22)" stroke-width="2.2"></path>
+                    <path d="M ${leftX.toFixed(2)} ${(axisY - 0.6).toFixed(2)} C ${(leftX + halfWidth * 0.2).toFixed(2)} ${(axisY - fillHeight * 0.4).toFixed(2)} ${(midX - halfWidth * 0.22).toFixed(2)} ${(fillY + waveLift * 0.52).toFixed(2)} ${midX.toFixed(2)} ${(fillY - waveLift * 0.42).toFixed(2)} C ${(midX + halfWidth * 0.22).toFixed(2)} ${(fillY + waveLift * 0.52).toFixed(2)} ${(rightX - halfWidth * 0.2).toFixed(2)} ${(axisY - fillHeight * 0.4).toFixed(2)} ${rightX.toFixed(2)} ${(axisY - 0.6).toFixed(2)}" fill="none" stroke="rgba(255, 152, 152, 0.18)" stroke-width="2"></path>
+                    <ellipse cx="${midX.toFixed(2)}" cy="${(axisY + 1.4).toFixed(2)}" rx="${(Math.max(16, halfWidth * 0.26)).toFixed(2)}" ry="${(Math.max(3.4, 3.4 + clampedProgress * 2.6)).toFixed(2)}" fill="rgba(74, 0, 0, 0.9)"></ellipse>
                 </g>
             `;
         }
