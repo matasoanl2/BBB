@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 
 import psycopg2
@@ -11,6 +12,44 @@ from buybaybye.core.runtime_config import DatabaseConfig
 
 
 _INITIALIZED_DATABASES: set[tuple[str, str, str, str, str]] = set()
+
+
+def connect_postgres_with_retry(*, fatal_context: str = "postgresql", **connect_kwargs):
+    """Подключиться к PostgreSQL с ретраями и аварийным выходом после 10 одинаковых ошибок."""
+
+    last_error_signature: tuple[str, str] | None = None
+    repeated_error_count = 0
+
+    while True:
+        try:
+            return psycopg2.connect(**connect_kwargs)
+        except psycopg2.Error as exc:
+            error_signature = (type(exc).__name__, str(exc).strip())
+            if error_signature == last_error_signature:
+                repeated_error_count += 1
+            else:
+                last_error_signature = error_signature
+                repeated_error_count = 1
+
+            print(
+                (
+                    f"[DB ERROR] Ошибка подключения к PostgreSQL ({fatal_context}); "
+                    f"повтор {repeated_error_count}/10: {exc}"
+                ),
+                flush=True,
+            )
+
+            if repeated_error_count >= 10:
+                print(
+                    (
+                        f"[FATAL] Приложение завершает работу: не удалось подключиться к PostgreSQL "
+                        f"после 10 одинаковых ошибок ({fatal_context}): {exc}"
+                    ),
+                    flush=True,
+                )
+                raise SystemExit(1) from exc
+
+            time.sleep(1)
 
 
 def _database_identity(database_config: DatabaseConfig) -> tuple[str, str, str, str, str]:
@@ -30,7 +69,8 @@ def ensure_runtime_schema(*, database_config: DatabaseConfig) -> None:
     if identity in _INITIALIZED_DATABASES:
         return
 
-    conn = psycopg2.connect(
+    conn = connect_postgres_with_retry(
+        fatal_context="runtime schema initialization",
         user=database_config.user,
         password=database_config.password,
         host=database_config.host,
@@ -104,7 +144,8 @@ def ensure_runtime_schema(*, database_config: DatabaseConfig) -> None:
 
 def get_db_connection(*, database_config: DatabaseConfig):
     """Создать подключение к PostgreSQL и гарантировать наличие runtime-схемы."""
-    return psycopg2.connect(
+    return connect_postgres_with_retry(
+        fatal_context="runtime db connection",
         user=database_config.user,
         password=database_config.password,
         host=database_config.host,

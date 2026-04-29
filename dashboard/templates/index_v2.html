@@ -1372,30 +1372,19 @@
         }
 
         async function refresh() {
-            const [statusResponse, historyResponse, chartsResponse] = await Promise.all([
-                fetch("/api/status", { cache: "no-store" }),
-                fetch("/api/history", { cache: "no-store" }),
-                fetch("/api/charts", { cache: "no-store" }),
-            ]);
-
-            for (const response of [statusResponse, historyResponse, chartsResponse]) {
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
+            const response = await fetch("/api/dashboard", { cache: "no-store" });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
             }
 
-            const [statusData, historyData, chartData] = await Promise.all([
-                statusResponse.json(),
-                historyResponse.json(),
-                chartsResponse.json(),
-            ]);
+            const dashboardData = await response.json();
 
             const effectivePayload = {
-                snapshot: getLatestSnapshot(statusData?.snapshot),
-                summary: getLatestSummary(statusData?.summary),
-                recentBets: getLatestArray(historyData?.recent_bets, "recentBets", isValidBetItem),
-                recentRounds: getLatestArray(historyData?.recent_rounds, "recentRounds", isValidRoundItem),
-                balanceSeries: getLatestBalanceSeries(chartData?.balance_series),
+                snapshot: getLatestSnapshot(dashboardData?.snapshot),
+                summary: getLatestSummary(dashboardData?.summary),
+                recentBets: getLatestArray(dashboardData?.recent_bets, "recentBets", isValidBetItem),
+                recentRounds: getLatestArray(dashboardData?.recent_rounds, "recentRounds", isValidRoundItem),
+                balanceSeries: getLatestBalanceSeries(dashboardData?.balance_series),
             };
 
             renderSummary(effectivePayload.snapshot, effectivePayload.summary, effectivePayload.recentRounds);

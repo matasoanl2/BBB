@@ -830,7 +830,7 @@
                     Одна панель для рантайм-состояния, балансов, последних ставок, выпавших раундов и событий сессии. Экран обновляется автоматически и читает только PostgreSQL + runtime snapshot.
                 </div>
                 <div class="hero-meta">
-                    <div class="chip">URL: <span class="mono">/api/status</span> + <span class="mono">/api/history</span> + <span class="mono">/api/charts</span></div>
+                    <div class="chip">URL: <span class="mono">/api/dashboard</span></div>
                     <div class="chip">Обновление: каждые 5 секунд</div>
                     <div class="chip">Источник: <span class="mono">runtime_snapshot</span> + history</div>
                 </div>
@@ -1977,32 +1977,21 @@
         }
 
         async function refresh() {
-            const [statusResponse, historyResponse, chartsResponse] = await Promise.all([
-                fetch("/api/status", { cache: "no-store" }),
-                fetch("/api/history", { cache: "no-store" }),
-                fetch("/api/charts", { cache: "no-store" }),
-            ]);
-
-            for (const response of [statusResponse, historyResponse, chartsResponse]) {
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
+            const response = await fetch("/api/dashboard", { cache: "no-store" });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
             }
 
-            const [statusData, historyData, chartData] = await Promise.all([
-                statusResponse.json(),
-                historyResponse.json(),
-                chartsResponse.json(),
-            ]);
+            const dashboardData = await response.json();
 
             const effectivePayload = {
-                snapshot: getLatestSnapshot(statusData?.snapshot),
-                summary: getLatestSummary(statusData?.summary),
-                recentBets: getLatestArray(historyData?.recent_bets, "recentBets", isValidBetItem),
-                recentRounds: getLatestArray(historyData?.recent_rounds, "recentRounds", isValidRoundItem),
-                recentEvents: getLatestArray(historyData?.recent_events, "recentEvents", isValidEventItem),
-                balanceSeries: getLatestBalanceSeries(chartData?.balance_series),
-                resultCurve: getLatestArray(chartData?.result_curve, "resultCurve", isValidResultPoint),
+                snapshot: getLatestSnapshot(dashboardData?.snapshot),
+                summary: getLatestSummary(dashboardData?.summary),
+                recentBets: getLatestArray(dashboardData?.recent_bets, "recentBets", isValidBetItem),
+                recentRounds: getLatestArray(dashboardData?.recent_rounds, "recentRounds", isValidRoundItem),
+                recentEvents: getLatestArray(dashboardData?.recent_events, "recentEvents", isValidEventItem),
+                balanceSeries: getLatestBalanceSeries(dashboardData?.balance_series),
+                resultCurve: getLatestArray(dashboardData?.result_curve, "resultCurve", isValidResultPoint),
             };
 
             renderSummary(effectivePayload.snapshot, effectivePayload.summary, effectivePayload.recentRounds);
@@ -2014,7 +2003,7 @@
             renderResultsChart(effectivePayload.resultCurve);
             renderNetChart(effectivePayload.resultCurve);
             renderRollingChart(effectivePayload.resultCurve);
-            maybeCelebrateWin(resolveLatestWin(statusData));
+            maybeCelebrateWin(resolveLatestWin(dashboardData));
             markRefreshCompleted();
         }
 

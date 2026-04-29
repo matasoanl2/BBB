@@ -8,13 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import psycopg2
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from psycopg2.extras import RealDictCursor
 
 from buybaybye.core.runtime_config import DatabaseConfig
+from buybaybye.modules.db import connect_postgres_with_retry
 from buybaybye.modules.db import ensure_runtime_schema
 
 
@@ -103,7 +103,8 @@ def _build_default_snapshot() -> dict[str, Any]:
 def _get_db_connection():
     """Создать подключение к PostgreSQL для dashboard-запросов."""
 
-    return psycopg2.connect(
+    return connect_postgres_with_retry(
+        fatal_context="dashboard request connection",
         user=os.getenv("DB_USER", "postgres"),
         password=os.getenv("DB_PASSWORD", "postgres"),
         host=os.getenv("DB_HOST", "localhost"),
@@ -657,44 +658,25 @@ def _get_recent_events(limit: int = 20, preferred_role: str | None = None, conn=
     return events
 
 
-def _build_status_payload() -> dict[str, Any]:
-    conn = _get_db_connection()
-    try:
-        snapshot = _get_snapshot(conn=conn)
-        return {
-            "snapshot": snapshot,
-            "summary": _get_summary(snapshot, conn=conn),
-            "latest_win": _get_latest_win(conn=conn),
-        }
-    finally:
-        conn.close()
+def _build_dashboard_payload() -> dict[str, Any]:
+    """Собрать полный payload dashboard через одно подключение к БД."""
 
-
-def _build_history_payload() -> dict[str, Any]:
     conn = _get_db_connection()
     try:
         snapshot = _get_snapshot(conn=conn)
         preferred_role = snapshot.get("runtime_role")
         recent_bets = _get_recent_bets(conn=conn)
         recent_rounds = _get_recent_rounds(conn=conn)
-        recent_events = _get_recent_events(preferred_role=preferred_role, conn=conn)
+
         return {
+            "snapshot": snapshot,
+            "summary": _get_summary(snapshot, conn=conn),
+            "latest_win": _get_latest_win(conn=conn),
             "recent_bets": recent_bets,
             "recent_rounds": recent_rounds,
-            "recent_events": recent_events,
+            "recent_events": _get_recent_events(preferred_role=preferred_role, conn=conn),
             "latest_bet": recent_bets[0] if recent_bets else None,
             "latest_round": recent_rounds[0] if recent_rounds else None,
-        }
-    finally:
-        conn.close()
-
-
-def _build_chart_payload() -> dict[str, Any]:
-    conn = _get_db_connection()
-    try:
-        snapshot = _get_snapshot(conn=conn)
-        preferred_role = snapshot.get("runtime_role")
-        return {
             "balance_series": _get_balance_series(preferred_role=preferred_role, conn=conn),
             "result_curve": _get_result_curve(conn=conn),
         }
@@ -724,22 +706,8 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/api/status")
-def api_status() -> dict[str, Any]:
-    """Return cheap live status payload for operator UI."""
+@app.get("/api/dashboard")
+def api_dashboard() -> dict[str, Any]:
+    """Return the full dashboard payload using a single DB connection."""
 
-    return _build_status_payload()
-
-
-@app.get("/api/history")
-def api_history() -> dict[str, Any]:
-    """Return recent bets, rounds, and events without charts."""
-
-    return _build_history_payload()
-
-
-@app.get("/api/charts")
-def api_charts() -> dict[str, Any]:
-    """Return chart payloads separately from live status."""
-
-    return _build_chart_payload()
+    return _build_dashboard_payload()
