@@ -12,6 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from psycopg2.extras import RealDictCursor
+from psycopg2.pool import SimpleConnectionPool
 
 from buybaybye.core.runtime_config import DatabaseConfig
 from buybaybye.modules.db import connect_postgres_with_retry
@@ -20,6 +21,7 @@ from buybaybye.modules.db import ensure_runtime_schema
 
 BASE_DIR = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+db_pool: SimpleConnectionPool | None = None
 
 
 def _env_flag_enabled(name: str, default: bool = False) -> bool:
@@ -44,7 +46,11 @@ async def lifespan(_: FastAPI):
     """Prepare dashboard schema on startup."""
 
     _ensure_dashboard_schema()
-    yield
+    _init_db_pool()
+    try:
+        yield
+    finally:
+        _close_db_pool()
 
 
 app = FastAPI(title="BuyBayBye Dashboard", lifespan=lifespan)
@@ -101,17 +107,63 @@ def _build_default_snapshot() -> dict[str, Any]:
 
 
 def _get_db_connection():
-    """Создать подключение к PostgreSQL для dashboard-запросов."""
+    """Получить подключение из dashboard connection pool."""
 
-    return connect_postgres_with_retry(
-        fatal_context="dashboard request connection",
-        user=os.getenv("DB_USER", "postgres"),
-        password=os.getenv("DB_PASSWORD", "postgres"),
-        host=os.getenv("DB_HOST", "localhost"),
-        port=os.getenv("DB_PORT", "5432"),
-        database=os.getenv("DB_NAME", "buybaybye"),
-        cursor_factory=RealDictCursor,
-    )
+    global db_pool
+    if db_pool is None:
+        _init_db_pool()
+    if db_pool is None:
+        raise RuntimeError("Dashboard DB pool is not initialized")
+    return db_pool.getconn()
+
+
+def _release_db_connection(conn) -> None:
+    """Вернуть подключение обратно в dashboard connection pool."""
+
+    if conn is None:
+        return
+
+    global db_pool
+    if db_pool is None:
+        conn.close()
+        return
+
+    db_pool.putconn(conn)
+
+
+def _init_db_pool() -> None:
+    """Инициализировать dashboard connection pool после проверки доступности БД."""
+
+    global db_pool
+    if db_pool is not None:
+        return
+
+    connect_kwargs = {
+        "user": os.getenv("DB_USER", "postgres"),
+        "password": os.getenv("DB_PASSWORD", "postgres"),
+        "host": os.getenv("DB_HOST", "localhost"),
+        "port": os.getenv("DB_PORT", "5432"),
+        "database": os.getenv("DB_NAME", "buybaybye"),
+        "cursor_factory": RealDictCursor,
+    }
+
+    probe_conn = connect_postgres_with_retry(fatal_context="dashboard request connection", **connect_kwargs)
+    probe_conn.close()
+
+    min_conn = max(1, int(os.getenv("DASHBOARD_DB_POOL_MIN_CONN", "1")))
+    max_conn = max(min_conn, int(os.getenv("DASHBOARD_DB_POOL_MAX_CONN", "10")))
+    db_pool = SimpleConnectionPool(minconn=min_conn, maxconn=max_conn, **connect_kwargs)
+
+
+def _close_db_pool() -> None:
+    """Закрыть все физические подключения dashboard connection pool."""
+
+    global db_pool
+    if db_pool is None:
+        return
+
+    db_pool.closeall()
+    db_pool = None
 
 
 def _ensure_dashboard_schema() -> None:
@@ -134,14 +186,16 @@ def _fetch_one(query: str, params: tuple[Any, ...] = (), conn=None) -> dict[str,
     own_connection = conn is None
     conn = conn or _get_db_connection()
     cursor = conn.cursor()
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query)
-    row = cursor.fetchone()
-    cursor.close()
-    if own_connection:
-        conn.close()
+    try:
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+        row = cursor.fetchone()
+    finally:
+        cursor.close()
+        if own_connection:
+            _release_db_connection(conn)
     return dict(row) if row else None
 
 
@@ -151,14 +205,16 @@ def _fetch_all(query: str, params: tuple[Any, ...] = (), conn=None) -> list[dict
     own_connection = conn is None
     conn = conn or _get_db_connection()
     cursor = conn.cursor()
-    if params:
-        cursor.execute(query, params)
-    else:
-        cursor.execute(query)
-    rows = [dict(row) for row in cursor.fetchall()]
-    cursor.close()
-    if own_connection:
-        conn.close()
+    try:
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+        rows = [dict(row) for row in cursor.fetchall()]
+    finally:
+        cursor.close()
+        if own_connection:
+            _release_db_connection(conn)
     return rows
 
 
@@ -681,7 +737,7 @@ def _build_dashboard_payload() -> dict[str, Any]:
             "result_curve": _get_result_curve(conn=conn),
         }
     finally:
-        conn.close()
+        _release_db_connection(conn)
 
 
 @app.get("/", response_class=HTMLResponse)
