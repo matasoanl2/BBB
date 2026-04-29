@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request
+import psycopg2
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from psycopg2.extras import RealDictCursor
@@ -46,7 +47,7 @@ async def lifespan(_: FastAPI):
     """Prepare dashboard schema on startup."""
 
     _ensure_dashboard_schema()
-    _init_db_pool()
+    _init_db_pool(use_retry=True)
     try:
         yield
     finally:
@@ -107,32 +108,60 @@ def _build_default_snapshot() -> dict[str, Any]:
 
 
 def _get_db_connection():
-    """Получить подключение из dashboard connection pool."""
+    """Получить подключение из dashboard connection pool.
+
+    При ленивой реинициализации (после сброса пула) использует быстрый
+    connect без retry — OperationalError при недоступной БД.
+    """
 
     global db_pool
     if db_pool is None:
-        _init_db_pool()
+        _init_db_pool(use_retry=False)
     if db_pool is None:
         raise RuntimeError("Dashboard DB pool is not initialized")
     return db_pool.getconn()
 
 
-def _release_db_connection(conn) -> None:
-    """Вернуть подключение обратно в dashboard connection pool."""
+def _release_db_connection(conn, *, broken: bool = False) -> None:
+    """Вернуть подключение обратно в dashboard connection pool.
+
+    Если соединение сломано (broken=True или conn.closed != 0), оно
+    удаляется из пула и пул сбрасывается для переинициализации.
+    """
 
     if conn is None:
         return
 
     global db_pool
     if db_pool is None:
-        conn.close()
+        try:
+            conn.close()
+        except Exception:
+            pass
         return
 
-    db_pool.putconn(conn)
+    is_broken = broken or bool(conn.closed)
+    if is_broken:
+        try:
+            db_pool.putconn(conn, close=True)
+        except Exception:
+            pass
+        # Сбросить пул — все соединения потенциально протухли
+        try:
+            db_pool.closeall()
+        except Exception:
+            pass
+        db_pool = None
+    else:
+        db_pool.putconn(conn)
 
 
-def _init_db_pool() -> None:
-    """Инициализировать dashboard connection pool после проверки доступности БД."""
+def _init_db_pool(*, use_retry: bool = False) -> None:
+    """Инициализировать dashboard connection pool.
+
+    use_retry=True — блокирующий retry (для startup lifespan).
+    use_retry=False — быстрая попытка; при недоступной БД бросает OperationalError.
+    """
 
     global db_pool
     if db_pool is not None:
@@ -147,7 +176,10 @@ def _init_db_pool() -> None:
         "cursor_factory": RealDictCursor,
     }
 
-    probe_conn = connect_postgres_with_retry(fatal_context="dashboard request connection", **connect_kwargs)
+    if use_retry:
+        probe_conn = connect_postgres_with_retry(fatal_context="dashboard startup", **connect_kwargs)
+    else:
+        probe_conn = psycopg2.connect(**connect_kwargs)
     probe_conn.close()
 
     min_conn = max(1, int(os.getenv("DASHBOARD_DB_POOL_MIN_CONN", "1")))
@@ -718,6 +750,7 @@ def _build_dashboard_payload() -> dict[str, Any]:
     """Собрать полный payload dashboard через одно подключение к БД."""
 
     conn = _get_db_connection()
+    broken = False
     try:
         snapshot = _get_snapshot(conn=conn)
         preferred_role = snapshot.get("runtime_role")
@@ -736,8 +769,11 @@ def _build_dashboard_payload() -> dict[str, Any]:
             "balance_series": _get_balance_series(preferred_role=preferred_role, conn=conn),
             "result_curve": _get_result_curve(conn=conn),
         }
+    except psycopg2.OperationalError:
+        broken = True
+        raise
     finally:
-        _release_db_connection(conn)
+        _release_db_connection(conn, broken=broken)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -766,4 +802,7 @@ def health() -> dict[str, str]:
 def api_dashboard() -> dict[str, Any]:
     """Return the full dashboard payload using a single DB connection."""
 
-    return _build_dashboard_payload()
+    try:
+        return _build_dashboard_payload()
+    except (psycopg2.OperationalError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail="БД временно недоступна") from exc

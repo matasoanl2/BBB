@@ -96,6 +96,7 @@ services:
       context: .
       dockerfile: Dockerfile.dashboard
     container_name: bb-dashboard
+    restart: always
     depends_on:
       postgres:
         condition: service_healthy
