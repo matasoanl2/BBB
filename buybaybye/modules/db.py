@@ -144,8 +144,7 @@ def ensure_runtime_schema(*, database_config: DatabaseConfig) -> None:
 
 def get_db_connection(*, database_config: DatabaseConfig):
     """Создать подключение к PostgreSQL и гарантировать наличие runtime-схемы."""
-    return connect_postgres_with_retry(
-        fatal_context="runtime db connection",
+    return psycopg2.connect(
         user=database_config.user,
         password=database_config.password,
         host=database_config.host,
