@@ -259,6 +259,7 @@
             display: inline-flex;
             align-items: center;
             gap: 12px;
+            flex-wrap: wrap;
         }
 
         .labels-toggle {
@@ -274,6 +275,10 @@
         .labels-toggle input {
             accent-color: var(--green);
             cursor: pointer;
+        }
+
+        .blood-toggle input {
+            accent-color: #8f1010;
         }
 
         .chart-shell {
@@ -893,6 +898,10 @@
                     </div>
                     <div class="chart-controls">
                         <div class="section-note" id="sessionChartMeta">0 точек</div>
+                        <label class="labels-toggle blood-toggle" for="bloodModeToggle">
+                            <input type="checkbox" id="bloodModeToggle" checked>
+                            <span>Blood mode</span>
+                        </label>
                     </div>
                 </div>
                 <div class="chart-shell">
@@ -1047,6 +1056,47 @@
     </div>
 
     <script>
+        const BLOOD_MODE_STORAGE_KEY = "bbb.dashboard.bloodModeEnabled";
+        const BLOOD_FILL_STARTED_AT_KEY = "bbb.dashboard.bloodFillStartedAt";
+        const BLOOD_FILL_DURATION_MS = 30000;
+
+        function readLocalStorageBoolean(key, defaultValue) {
+            try {
+                const rawValue = window.localStorage.getItem(key);
+                if (rawValue === null) {
+                    return defaultValue;
+                }
+                return rawValue === "1";
+            } catch (_error) {
+                return defaultValue;
+            }
+        }
+
+        function readLocalStorageNumber(key) {
+            try {
+                const rawValue = window.localStorage.getItem(key);
+                if (rawValue === null) {
+                    return null;
+                }
+                const parsed = Number(rawValue);
+                return Number.isFinite(parsed) ? parsed : null;
+            } catch (_error) {
+                return null;
+            }
+        }
+
+        function writeLocalStorageValue(key, value) {
+            try {
+                if (value === null || value === undefined) {
+                    window.localStorage.removeItem(key);
+                    return;
+                }
+                window.localStorage.setItem(key, String(value));
+            } catch (_error) {
+                // Ignore storage failures.
+            }
+        }
+
         const dashboardState = {
             hasHydrated: false,
             lastSeenWinSignature: null,
@@ -1055,6 +1105,8 @@
 
         const chartState = {
             balanceSeries: [],
+            bloodModeEnabled: readLocalStorageBoolean(BLOOD_MODE_STORAGE_KEY, true),
+            bloodFillStartedAt: readLocalStorageNumber(BLOOD_FILL_STARTED_AT_KEY),
         };
 
         const refreshState = {
@@ -1173,6 +1225,41 @@
                 piece.style.setProperty("--spin", `${(Math.random() - 0.5) * 720}deg`);
                 layer.appendChild(piece);
             }
+        }
+
+        function ensureBloodFillStart() {
+            if (!chartState.bloodModeEnabled) {
+                return null;
+            }
+            if (!Number.isFinite(chartState.bloodFillStartedAt)) {
+                chartState.bloodFillStartedAt = Date.now();
+                writeLocalStorageValue(BLOOD_FILL_STARTED_AT_KEY, chartState.bloodFillStartedAt);
+            }
+            return chartState.bloodFillStartedAt;
+        }
+
+        function getBloodFillProgress() {
+            const startedAt = ensureBloodFillStart();
+            if (!startedAt) {
+                return 0;
+            }
+            return Math.max(0, Math.min(1, (Date.now() - startedAt) / BLOOD_FILL_DURATION_MS));
+        }
+
+        function syncBloodToggleUi() {
+            const toggle = document.getElementById("bloodModeToggle");
+            if (toggle) {
+                toggle.checked = chartState.bloodModeEnabled;
+            }
+        }
+
+        function setBloodModeEnabled(enabled) {
+            chartState.bloodModeEnabled = Boolean(enabled);
+            writeLocalStorageValue(BLOOD_MODE_STORAGE_KEY, chartState.bloodModeEnabled ? 1 : 0);
+            chartState.bloodFillStartedAt = chartState.bloodModeEnabled ? Date.now() : null;
+            writeLocalStorageValue(BLOOD_FILL_STARTED_AT_KEY, chartState.bloodFillStartedAt);
+            syncBloodToggleUi();
+            renderCharts(chartState.balanceSeries);
         }
 
         function hasDieValue(value) {
@@ -1874,6 +1961,33 @@
             return `${streamsMarkup}${puddleMarkup}`;
         }
 
+        function buildBloodReservoir(svgId, width, height, padding, fillProgress) {
+            const clampedProgress = Math.max(0, Math.min(1, Number(fillProgress) || 0));
+            if (clampedProgress <= 0) {
+                return "";
+            }
+
+            const plotWidth = width - padding.left - padding.right;
+            const plotHeight = height - padding.top - padding.bottom;
+            const axisY = height - padding.bottom;
+            const fillHeight = Math.max(6, plotHeight * clampedProgress);
+            const fillY = Math.max(padding.top, axisY - fillHeight);
+            const leftX = padding.left;
+            const rightX = width - padding.right;
+            const midX = leftX + (plotWidth / 2);
+            const waveLift = 4 + (clampedProgress * 7);
+
+            return `
+                <g clip-path="url(#bloodPlotClip-${svgId})">
+                    <rect x="${leftX.toFixed(2)}" y="${fillY.toFixed(2)}" width="${plotWidth.toFixed(2)}" height="${fillHeight.toFixed(2)}" fill="url(#bloodFloodGradient-${svgId})" opacity="${(0.28 + clampedProgress * 0.42).toFixed(2)}"></rect>
+                    <path d="M ${leftX.toFixed(2)} ${fillY.toFixed(2)} C ${(leftX + plotWidth * 0.22).toFixed(2)} ${(fillY - waveLift).toFixed(2)} ${(midX - plotWidth * 0.12).toFixed(2)} ${(fillY + waveLift * 0.4).toFixed(2)} ${midX.toFixed(2)} ${(fillY - waveLift * 0.5).toFixed(2)} C ${(midX + plotWidth * 0.18).toFixed(2)} ${(fillY + waveLift).toFixed(2)} ${(rightX - plotWidth * 0.16).toFixed(2)} ${(fillY - waveLift * 0.35).toFixed(2)} ${rightX.toFixed(2)} ${fillY.toFixed(2)} L ${rightX.toFixed(2)} ${axisY.toFixed(2)} L ${leftX.toFixed(2)} ${axisY.toFixed(2)} Z" fill="rgba(149, 12, 12, 0.68)">
+                        <animateTransform attributeName="transform" type="translate" values="0 0;0 -2;0 0" dur="4.4s" repeatCount="indefinite"></animateTransform>
+                    </path>
+                    <path d="M ${leftX.toFixed(2)} ${(fillY + 2).toFixed(2)} C ${(leftX + plotWidth * 0.26).toFixed(2)} ${(fillY - waveLift * 0.35).toFixed(2)} ${(midX - plotWidth * 0.1).toFixed(2)} ${(fillY + waveLift * 0.18).toFixed(2)} ${midX.toFixed(2)} ${(fillY - waveLift * 0.18).toFixed(2)} C ${(midX + plotWidth * 0.17).toFixed(2)} ${(fillY + waveLift * 0.52).toFixed(2)} ${(rightX - plotWidth * 0.18).toFixed(2)} ${(fillY - waveLift * 0.24).toFixed(2)} ${rightX.toFixed(2)} ${(fillY + 2).toFixed(2)}" fill="none" stroke="rgba(255, 146, 146, 0.22)" stroke-width="2.2"></path>
+                </g>
+            `;
+        }
+
         function formatChartTime(value) {
             if (!value) return "-";
             const date = new Date(value);
@@ -1944,11 +2058,15 @@
             const path = makePathFromSeries(chartSeries, width, height, accessor, minValue, maxValue, padding);
             const axes = buildBalanceAxes(chartSeries, width, height, minValue, maxValue, padding);
             const bloodMode = Boolean(options.bloodMode);
+            const bloodFillProgress = Math.max(0, Math.min(1, Number(options.bloodFillProgress) || 0));
 
             let lineMarkup = `<path d="${path}" fill="none" stroke="${strokeColor}" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"></path>`;
             if (bloodMode) {
                 lineMarkup = `
                     <defs>
+                        <clipPath id="bloodPlotClip-${svgId}">
+                            <rect x="${padding.left.toFixed(2)}" y="${padding.top.toFixed(2)}" width="${(width - padding.left - padding.right).toFixed(2)}" height="${(height - padding.top - padding.bottom).toFixed(2)}"></rect>
+                        </clipPath>
                         <linearGradient id="bloodStrokeGradient-${svgId}" x1="0%" y1="0%" x2="100%" y2="0%">
                             <stop offset="0%" stop-color="#4b0000"></stop>
                             <stop offset="55%" stop-color="#8f1010"></stop>
@@ -1967,7 +2085,12 @@
                             <stop offset="50%" stop-color="#a50f0f"></stop>
                             <stop offset="100%" stop-color="#4f0000"></stop>
                         </linearGradient>
+                        <linearGradient id="bloodFloodGradient-${svgId}" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stop-color="rgba(217, 38, 38, 0.16)"></stop>
+                            <stop offset="100%" stop-color="rgba(86, 0, 0, 0.92)"></stop>
+                        </linearGradient>
                     </defs>
+                    ${buildBloodReservoir(svgId, width, height, padding, bloodFillProgress)}
                     <path d="${path}" fill="none" stroke="url(#bloodStrokeGradient-${svgId})" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"></path>
                     <path d="${path}" fill="none" stroke="rgba(255, 85, 85, 0.36)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="10 24">
                         <animate attributeName="stroke-dashoffset" values="0;-102" dur="3.2s" repeatCount="indefinite"></animate>
@@ -1984,7 +2107,11 @@
         }
 
         function renderCharts(series) {
-            renderBalanceChart(series, "sessionBalanceChart", "sessionChartMeta", (item) => item.session_balance, "#8f1010", "Пока нет данных session balance", { bloodMode: true });
+            const sessionBloodModeEnabled = chartState.bloodModeEnabled;
+            renderBalanceChart(series, "sessionBalanceChart", "sessionChartMeta", (item) => item.session_balance, sessionBloodModeEnabled ? "#8f1010" : "#1f7a4d", "Пока нет данных session balance", {
+                bloodMode: sessionBloodModeEnabled,
+                bloodFillProgress: sessionBloodModeEnabled ? getBloodFillProgress() : 0,
+            });
             renderBalanceChart(series, "realBalanceChart", "realChartMeta", (item) => item.account_balance, "#2d6a8c", "Пока нет данных real balance");
         }
 
@@ -2101,6 +2228,13 @@
         }
 
         async function boot() {
+            syncBloodToggleUi();
+            const bloodToggle = document.getElementById("bloodModeToggle");
+            if (bloodToggle) {
+                bloodToggle.addEventListener("change", (event) => {
+                    setBloodModeEnabled(Boolean(event.target?.checked));
+                });
+            }
             startRefreshTimer();
             try {
                 await refresh();
