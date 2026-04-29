@@ -1911,6 +1911,19 @@
             return points;
         }
 
+        function buildAreaUnderCurvePath(pathValue, height, padding) {
+            const points = extractPathPoints(pathValue);
+            if (!points.length) {
+                return "";
+            }
+
+            const axisY = height - padding.bottom;
+            const firstPoint = points[0];
+            const lastPoint = points[points.length - 1];
+            const lineSegments = points.map((point) => `L ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+            return `M ${firstPoint.x.toFixed(2)} ${axisY.toFixed(2)} ${lineSegments} L ${lastPoint.x.toFixed(2)} ${axisY.toFixed(2)} Z`;
+        }
+
         function buildBloodDrips(pathValue, svgId, height, padding) {
             const points = extractPathPoints(pathValue);
             if (points.length < 3) {
@@ -2056,6 +2069,7 @@
             const minValue = Math.min(...values);
             const maxValue = Math.max(...values);
             const path = makePathFromSeries(chartSeries, width, height, accessor, minValue, maxValue, padding);
+            const areaPath = buildAreaUnderCurvePath(path, height, padding);
             const axes = buildBalanceAxes(chartSeries, width, height, minValue, maxValue, padding);
             const bloodMode = Boolean(options.bloodMode);
             const bloodFillProgress = Math.max(0, Math.min(1, Number(options.bloodFillProgress) || 0));
@@ -2065,7 +2079,7 @@
                 lineMarkup = `
                     <defs>
                         <clipPath id="bloodPlotClip-${svgId}">
-                            <rect x="${padding.left.toFixed(2)}" y="${padding.top.toFixed(2)}" width="${(width - padding.left - padding.right).toFixed(2)}" height="${(height - padding.top - padding.bottom).toFixed(2)}"></rect>
+                            <path d="${areaPath}"></path>
                         </clipPath>
                         <linearGradient id="bloodStrokeGradient-${svgId}" x1="0%" y1="0%" x2="100%" y2="0%">
                             <stop offset="0%" stop-color="#4b0000"></stop>
@@ -2086,8 +2100,8 @@
                             <stop offset="100%" stop-color="#4f0000"></stop>
                         </linearGradient>
                         <linearGradient id="bloodFloodGradient-${svgId}" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stop-color="rgba(217, 38, 38, 0.16)"></stop>
-                            <stop offset="100%" stop-color="rgba(86, 0, 0, 0.92)"></stop>
+                            <stop offset="0%" stop-color="rgba(122, 8, 8, 0.82)"></stop>
+                            <stop offset="100%" stop-color="rgba(52, 0, 0, 0.98)"></stop>
                         </linearGradient>
                     </defs>
                     ${buildBloodReservoir(svgId, width, height, padding, bloodFillProgress)}
