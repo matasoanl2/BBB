@@ -49,6 +49,8 @@ class RuntimeBettingState:
     low_balance_pause_reason: str | None = None
     low_balance_pause_started_at: str | None = None
     low_balance_pause_targets: list[str] = field(default_factory=list)
+    target_balance_pause_last_check_at: str | None = None
+    target_balance_pause_last_observed_balance: float | None = None
     last_bet_amount: float = 0.0
     last_set_amount: float = 0.0
     last_set_status: str | None = None
