@@ -60,7 +60,7 @@ services:
 
     volumes:
       - ./strategies:/app/strategies:ro
-    cpus: "1.20"
+    cpus: "0.80"
     mem_limit: "1024m"
     shm_size: "1gb"
     stdin_open: true
@@ -85,7 +85,7 @@ services:
     volumes:
       - ./profile_docker:/app/profile
       - ./strategies:/app/strategies:ro
-    cpus: "1.20"
+    cpus: "0.80"
     mem_limit: "1024m"
     shm_size: "1gb"
     stdin_open: true
