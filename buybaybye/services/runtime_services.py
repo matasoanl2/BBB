@@ -213,6 +213,12 @@ class RuntimeServices:
                 return f"{ab:.0f}р{suffix}"
             return f"{(ctx.betting_state_2 or {}).get('session_balance', 0):.0f}р"
 
+        # Синхронизировать account_balance из слота 1 в слот 2, чтобы проверки баланса
+        # и логика возобновления паузы внутри _betting_place_bets работали корректно.
+        ab = orig_state.get("account_balance")
+        if ab is not None:
+            ctx.betting_state_2["account_balance"] = ab
+
         ctx.betting_state = ctx.betting_state_2
         ctx.current_strategy = ctx.current_strategy_2
         result = False
