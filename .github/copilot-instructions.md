@@ -59,6 +59,7 @@ There is no automated test suite yet. If tests are added, use `pytest`.
 - Keep changes consistent with the modular runtime layout; do not move logic back into `main.py`
 - Strategies are data, not code: add or change betting progressions in `strategies/*.yaml`, not in Python code
 - `BASE_BET × coefficient` must stay divisible by 10; strategy coefficients are expected to be integers
+- When writing or updating a strategy YAML, always check if `# банк:` already exists on line 4 before adding it; if it exists, **update** the existing line in place — never duplicate it
 - Read config through the runtime config layer for runtime code; avoid scattering fresh `os.getenv` reads across runtime services unless there is a clear reason
 - Preserve the current logging style: Russian user-facing strings, columnar bet logs, ANSI-color-aware formatting, and emoji width compensation
 - Prefer extending the existing runtime layers (`runtime_config`, `runtime_context`, service modules) rather than introducing new globals

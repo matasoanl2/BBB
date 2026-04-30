@@ -204,8 +204,18 @@ class RuntimeServices:
 
         orig_state = ctx.betting_state
         orig_strategy = ctx.current_strategy
+
+        def _balance_for_log_2() -> str:
+            """Вернуть real balance для логов слота 2, читая account_balance из главного состояния."""
+            ab = orig_state.get("account_balance")
+            if ab is not None:
+                suffix = " !" if self.accounting.is_account_balance_stale() else ""
+                return f"{ab:.0f}р{suffix}"
+            return f"{(ctx.betting_state_2 or {}).get('session_balance', 0):.0f}р"
+
         ctx.betting_state = ctx.betting_state_2
         ctx.current_strategy = ctx.current_strategy_2
+        result = False
         try:
             result = await _betting_place_bets(
                 page,
@@ -219,7 +229,7 @@ class RuntimeServices:
                 calculate_roi_func=self.calculate_roi_2,
                 format_outcome_pretty_func=self.betting.format_outcome_pretty,
                 format_bet_log_func=self.betting.format_bet_log,
-                get_balance_for_log_func=self.get_balance_for_log,
+                get_balance_for_log_func=_balance_for_log_2,
                 get_db_connection_func=self.get_db_connection,
                 is_forbidden_access_error_func=self.is_forbidden_access_error,
                 reload_page_and_refresh_token_func=self.reload_page_and_refresh_token,
@@ -230,6 +240,12 @@ class RuntimeServices:
         finally:
             ctx.betting_state = orig_state
             ctx.current_strategy = orig_strategy
+        # Зарегистрировать падение баланса от слота 2 в главном betting_state,
+        # чтобы accounting не трактовал его как внешний вывод.
+        if result:
+            orig_state["pending_expected_bet_drop"] = (
+                float(orig_state.get("pending_expected_bet_drop", 0.0) or 0.0) + amount
+            )
         return result
 
     def wire_ws_logging(self, page) -> None:
