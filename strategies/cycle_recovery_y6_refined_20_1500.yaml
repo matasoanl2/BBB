@@ -1,3 +1,6 @@
-description: "Версия на основе cycle_recovery_y6_refined: 25 шагов, старт с 1, на каждом шаге при выигрыше маржа не меньше ставки текущего шага"
+name: "Cycle Recovery Y6 Refined 20x1500"
+description: "Версия на основе cycle_recovery_y6_refined: 20 шагов, старт с 1, на каждом шаге при выигрыше маржа не меньше ставки текущего шага"
+coefficients: [1, 1, 1, 1, 2, 2, 3, 3, 4, 5, 7, 9, 11, 14, 18, 23, 29, 37, 47, 59]
+# банк: 277 базовых ставок | раундов: 20
 payout_coefficient: 5.7
 reset_condition: "win"
