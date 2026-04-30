@@ -1,0 +1,6 @@
+name: "Cycle Recovery Y6 Refined 27x1500"
+description: "Версия на основе cycle_recovery_y6_refined_25_1500: 27 шагов, payout=5.7, банк <= 1500, на каждом шаге при выигрыше маржа не меньше ставки текущего шага"
+coefficients: [1, 1, 1, 1, 2, 2, 3, 3, 4, 5, 7, 9, 11, 14, 18, 23, 29, 37, 47, 59, 75, 96, 122, 155, 196, 249, 317]
+# банк: 1487 базовых ставок | раундов: 27
+payout_coefficient: 5.7
+reset_condition: "win"
