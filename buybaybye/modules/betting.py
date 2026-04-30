@@ -488,8 +488,11 @@ async def place_bets(
         )
         required_bank_amount = float(required_bank_units) * float(betting_config.base_bet) * float(len(normalized_targets))
         is_first_strategy_step = int(betting_state.get("total_bet_rounds", 0) or 0) == 0 and int(step_for_history or 0) == 0
+        check_required_bank_on_first_step = bool(
+            getattr(betting_config, "check_required_bank_on_first_step", True)
+        )
 
-        if is_first_strategy_step:
+        if is_first_strategy_step and check_required_bank_on_first_step:
             if available_balance is None:
                 pause_changed = _set_low_balance_pause_state(
                     betting_state,

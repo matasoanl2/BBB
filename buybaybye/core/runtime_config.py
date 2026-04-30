@@ -101,6 +101,7 @@ class DatabaseConfig:
 class BettingConfig:
     requested_enabled: bool
     enabled: bool
+    check_required_bank_on_first_step: bool
     configured_targets: tuple[BetTarget, ...]
     configured_targets_raw: str
     configured_targets_error: str | None
@@ -301,6 +302,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
         betting=BettingConfig(
             requested_enabled=requested_betting_enabled,
             enabled=requested_betting_enabled and runtime_role.can_place_bets,
+            check_required_bank_on_first_step=_env_bool("CHECK_REQUIRED_BANK_ON_FIRST_STEP", "true"),
             configured_targets=configured_targets,
             configured_targets_raw=raw_bet_targets,
             configured_targets_error=configured_targets_error,
