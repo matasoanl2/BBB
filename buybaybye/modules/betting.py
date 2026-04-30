@@ -1133,6 +1133,8 @@ async def process_betting_round(
     calculate_bet_amount_func,
     place_bet_func,
     place_bets_func,
+    calculate_bet_amount_2_func=None,
+    place_bets_2_func=None,
 ) -> None:
     betting_state = runtime_context.betting_state
     current_strategy = runtime_context.current_strategy
@@ -1306,6 +1308,87 @@ async def process_betting_round(
         if result_snapshot_extra is not None:
             update_runtime_snapshot_func("bet_result", result_snapshot_extra)
 
+    # Обработка результата второго слота ставок
+    betting_state_2 = runtime_context.betting_state_2
+    current_strategy_2 = runtime_context.current_strategy_2
+    if betting_state_2 is not None and current_strategy_2 is not None:
+        pending_bets_2 = list(betting_state_2.get("pending_bets") or [])
+        if pending_bets_2:
+            try:
+                conn_2 = get_db_connection_func()
+                cursor_2 = conn_2.cursor()
+                payout_coeff_2 = current_strategy_2.get("payout_coefficient", 5.7)
+                round_margin_2 = 0.0
+                current_step_2 = int(betting_state_2.get("current_step", 0) or 0)
+                max_steps_2 = len(current_strategy_2.get("coefficients", [1]))
+                settlement_credit_2 = 0.0
+                round_target_labels_2: list[str] = []
+
+                for pending_bet in pending_bets_2:
+                    target = BetTarget(outcome=pending_bet["outcome"], specifier=pending_bet.get("specifier", ""))
+                    is_win, stored_dice_color_2, actual_dice_value_2 = _is_target_win(target, dice_results)
+                    status = "win" if is_win else "loss"
+                    bet_amount = float(pending_bet.get("amount", 0.0) or 0.0)
+                    margin = (bet_amount * payout_coeff_2) - bet_amount if is_win else -bet_amount
+                    if is_win:
+                        settlement_credit_2 += bet_amount * payout_coeff_2
+                    round_margin_2 += margin
+                    round_target_labels_2.append(format_outcome_pretty_func(target.outcome, target.specifier))
+                    if pending_bet.get("history_id") is not None:
+                        cursor_2.execute(
+                            """
+                            UPDATE bet_history
+                            SET status = %s, result_dice_color = %s, result_dice_value = %s
+                            WHERE id = %s
+                            """,
+                            (status, stored_dice_color_2, actual_dice_value_2, pending_bet["history_id"]),
+                        )
+
+                betting_state_2["pending_bets"] = []
+                betting_state_2["pending_expected_settlement_credit"] = settlement_credit_2
+                betting_state_2["reconciliation_phase"] = "awaiting_settlement" if settlement_credit_2 > 0.009 else "idle"
+                betting_state_2["total_profit"] += round_margin_2
+                betting_state_2["session_balance"] += round_margin_2
+
+                restarted_2 = False
+                if round_margin_2 > 0:
+                    betting_state_2["current_step"] = 0
+                    betting_state_2["consecutive_losses"] = 0
+                elif current_step_2 + 1 >= max_steps_2:
+                    betting_state_2["current_step"] = 0
+                    betting_state_2["consecutive_losses"] = 0
+                    restarted_2 = True
+                else:
+                    betting_state_2["current_step"] = current_step_2 + 1
+                    betting_state_2["consecutive_losses"] = betting_state_2.get("consecutive_losses", 0) + 1
+
+                round_targets_display_2 = ", ".join(round_target_labels_2)
+                resolved_round_number_2 = int(pending_bets_2[0].get("round_number", 0) or 0) if pending_bets_2 else 0
+                log_suffix_2 = " [♻️ RESTART]" if restarted_2 else ""
+                log_line_2 = format_bet_log_func(
+                    action="RES",
+                    status_icon="✅" if round_margin_2 > 0 else "❌",
+                    outcome=f"[2]{round_targets_display_2}",
+                    amount=f"{betting_state_2.get('last_bet_amount', 0):.0f}р",
+                    step=(f"{current_step_2+1}/{max_steps_2}" if round_margin_2 > 0 or not restarted_2 else f"{max_steps_2}/{max_steps_2}"),
+                    result=actual_dice_representation,
+                    profit=f"{round_margin_2:+.0f}р",
+                    roi=f"{(betting_state_2.get('total_profit', 0) / betting_state_2.get('total_bet_amount', 1) * 100) if betting_state_2.get('total_bet_amount', 0) > 0 else 0:.2f}%",
+                    balance=f"{betting_state_2.get('session_balance', 0):.0f}р",
+                    real_balance=get_balance_for_log_func(),
+                    bets_count=str(resolved_round_number_2).zfill(3),
+                )
+                print(log_line_2 + log_suffix_2, flush=True)
+                conn_2.commit()
+            except Exception as exc_2:
+                print(f"[DB ERROR] Ошибка обновления результата ставки (слот 2): {exc_2}", flush=True)
+            finally:
+                try:
+                    cursor_2.close()
+                    conn_2.close()
+                except Exception:
+                    pass
+
     if bet_debug_enabled:
         print(f"[DEBUG PROCESS] DYNAMIC_BET_MODE={dynamic_bet_mode}, calling _update_dynamic_bet", flush=True)
     if dynamic_bet_mode:
@@ -1359,3 +1442,15 @@ async def process_betting_round(
             flush=True,
         )
     await place_bets_func(page, bet_targets_to_place, bet_amount)
+
+    # Второй слот: размещение ставок
+    if place_bets_2_func is not None and calculate_bet_amount_2_func is not None:
+        slot2_targets = runtime_context.configured_bet_targets_2
+        if slot2_targets:
+            slot2_amount = calculate_bet_amount_2_func()
+            if bet_debug_enabled:
+                print(
+                    f"[DEBUG PROCESS_BET-2] Вызов place_bets_2 для {[t.token for t in slot2_targets]} по {slot2_amount:.0f}р",
+                    flush=True,
+                )
+            await place_bets_2_func(page, slot2_targets, slot2_amount)

@@ -114,6 +114,13 @@ class BettingConfig:
     bet_delay_min: float
     bet_delay_max: float
     debug_enabled: bool
+    # Вторичный слот ставок (STRATEGY_2 / BASE_BET_2 / BET_TARGETS_2)
+    strategy_name_2: str = ""
+    base_bet_2: float = 0.0
+    configured_targets_2: tuple[BetTarget, ...] = ()
+    configured_targets_raw_2: str = ""
+    configured_targets_error_2: str | None = None
+    secondary_enabled: bool = False
 
 
 @dataclass(slots=True)
@@ -207,6 +214,8 @@ def validate_runtime_config(config: RuntimeConfig) -> None:
         raise ValueError("[ERROR] BET_DELAY_MIN и BET_DELAY_MAX не могут быть отрицательными.")
     if config.betting.bet_delay_min > config.betting.bet_delay_max:
         raise ValueError("[ERROR] BET_DELAY_MIN не может быть больше BET_DELAY_MAX.")
+    if config.betting.secondary_enabled and config.betting.base_bet_2 <= 0:
+        raise ValueError("[ERROR] BASE_BET_2 должен быть положительным числом.")
     if config.dynamic_betting.window_size <= 0:
         raise ValueError("[ERROR] DYNAMIC_WINDOW_SIZE должен быть больше 0.")
     if config.dynamic_betting.recalc_interval <= 0:
@@ -264,6 +273,11 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
     )
     raw_bet_targets = (os.getenv("BET_TARGETS") or "").strip()
     configured_targets, configured_targets_error = _parse_bet_targets(raw_bet_targets or None)
+    raw_bet_targets_2 = (os.getenv("BET_TARGETS_2") or "").strip()
+    configured_targets_2, configured_targets_error_2 = _parse_bet_targets(raw_bet_targets_2 or None)
+    raw_strategy_name_2 = os.getenv("STRATEGY_2", "").strip()
+    raw_base_bet_2 = float(os.getenv("BASE_BET_2", "0") or "0")
+    secondary_enabled = bool(raw_strategy_name_2 and raw_base_bet_2 > 0 and configured_targets_2)
     if not configured_targets:
         configured_targets_error = configured_targets_error or "[ERROR] BET_TARGETS не задан. Используйте формат R1,R2,Y3,D."
         configured_targets = (BetTarget(outcome="red", specifier="1"),)
@@ -315,6 +329,12 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             bet_delay_min=float(os.getenv("BET_DELAY_MIN", "0.8")),
             bet_delay_max=float(os.getenv("BET_DELAY_MAX", "1.5")),
             debug_enabled=_env_bool("BET_DEBUG_ENABLED"),
+            strategy_name_2=raw_strategy_name_2,
+            base_bet_2=raw_base_bet_2,
+            configured_targets_2=configured_targets_2,
+            configured_targets_raw_2=raw_bet_targets_2,
+            configured_targets_error_2=configured_targets_error_2,
+            secondary_enabled=secondary_enabled,
         ),
         dynamic_betting=DynamicBettingConfig(
             enabled=_env_bool("DYNAMIC_BET_MODE"),

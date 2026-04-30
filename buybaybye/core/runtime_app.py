@@ -87,6 +87,34 @@ class RuntimeApp:
             self.runtime_context.bet_mode_outcome,
             self.runtime_context.bet_mode_specifier,
         )
+
+        # Инициализация второго слота ставок (если STRATEGY_2 задан)
+        if betting_config.secondary_enabled:
+            if betting_config.configured_targets_error_2:
+                print(betting_config.configured_targets_error_2, flush=True)
+                sys.exit(1)
+            strategy_name_2 = betting_config.strategy_name_2
+            if strategy_name_2 not in self.runtime_context.loaded_strategies:
+                print(f"[ERROR] Стратегия STRATEGY_2='{strategy_name_2}' не найдена. Доступные:", flush=True)
+                for name, strategy in self.runtime_context.loaded_strategies.items():
+                    print(f"  - {name}: {strategy['description']}", flush=True)
+                sys.exit(1)
+            self.runtime_context.current_strategy_2 = self.runtime_context.loaded_strategies[strategy_name_2]
+            default_target_2 = betting_config.configured_targets_2[0]
+            self.runtime_context.configured_bet_targets_2 = betting_config.configured_targets_2
+            self.runtime_context.bet_mode_outcome_2 = default_target_2.outcome
+            self.runtime_context.bet_mode_specifier_2 = default_target_2.specifier or "5"
+            self.runtime_context.betting_state_2 = init_betting_state(
+                self.runtime_context.current_strategy_2,
+                self.runtime_context.bet_mode_outcome_2,
+                self.runtime_context.bet_mode_specifier_2,
+            )
+            print(
+                f"[STRATEGY-2] Второй слот: {self.runtime_context.current_strategy_2['name']} | "
+                f"цели: {betting_config.configured_targets_raw_2} | базовая ставка: {betting_config.base_bet_2}р",
+                flush=True,
+            )
+
         self.services.update_runtime_snapshot("startup")
         print_strategy_startup_info(
             runtime_context=self.runtime_context,

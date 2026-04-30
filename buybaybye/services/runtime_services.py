@@ -103,6 +103,11 @@ class RuntimeServices:
 
         return self.betting.advance_step_after_set_error()
 
+    def advance_step_2_after_set_error(self) -> tuple[int, int, bool]:
+        """Сдвинуть шаг прогрессии второго слота после SET-ошибки."""
+
+        return self.betting.advance_step_2_after_set_error()
+
     def get_db_connection(self):
         """Создать подключение к базе данных через infrastructure-service."""
 
@@ -190,6 +195,43 @@ class RuntimeServices:
             queue_telegram_notification_func=self.queue_telegram_notification,
         )
 
+    async def place_bets_2(self, page, bet_targets, amount: float, allow_refresh_retry: bool = True) -> bool:
+        """Разместить ставки для второго слота, используя betting_state_2 и current_strategy_2."""
+
+        ctx = self.runtime_context
+        if ctx.betting_state_2 is None or ctx.current_strategy_2 is None:
+            return False
+
+        orig_state = ctx.betting_state
+        orig_strategy = ctx.current_strategy
+        ctx.betting_state = ctx.betting_state_2
+        ctx.current_strategy = ctx.current_strategy_2
+        try:
+            result = await _betting_place_bets(
+                page,
+                bet_targets,
+                amount,
+                allow_refresh_retry=allow_refresh_retry,
+                runtime_context=ctx,
+                runtime_config=self.runtime_config,
+                get_jwt_token_func=self.get_jwt_token,
+                validate_base_bet_func=self.validate_base_bet,
+                calculate_roi_func=self.calculate_roi_2,
+                format_outcome_pretty_func=self.betting.format_outcome_pretty,
+                format_bet_log_func=self.betting.format_bet_log,
+                get_balance_for_log_func=self.get_balance_for_log,
+                get_db_connection_func=self.get_db_connection,
+                is_forbidden_access_error_func=self.is_forbidden_access_error,
+                reload_page_and_refresh_token_func=self.reload_page_and_refresh_token,
+                advance_step_after_set_error_func=self.advance_step_2_after_set_error,
+                update_runtime_snapshot_func=self.update_runtime_snapshot,
+                queue_telegram_notification_func=self.queue_telegram_notification,
+            )
+        finally:
+            ctx.betting_state = orig_state
+            ctx.current_strategy = orig_strategy
+        return result
+
     def wire_ws_logging(self, page) -> None:
         """Подключить websocket события страницы к accounting и betting обработчикам."""
 
@@ -237,6 +279,16 @@ class RuntimeServices:
         """Вернуть текущий ROI сессии через betting-service."""
 
         return self.betting.calculate_roi()
+
+    def calculate_roi_2(self) -> float:
+        """Вернуть текущий ROI второго слота."""
+
+        return self.betting.calculate_roi_2()
+
+    def calculate_bet_amount_2(self) -> float:
+        """Рассчитать размер следующей ставки по второй стратегии."""
+
+        return self.betting.calculate_bet_amount_2()
 
     def get_accounting_age_seconds(self, reference_key: str) -> float | None:
         """Вернуть возраст accounting timestamp-поля по его ключу."""
@@ -360,6 +412,8 @@ class RuntimeServices:
             calculate_bet_amount_func=self.betting.calculate_bet_amount,
             place_bet_func=self.place_bet,
             place_bets_func=self.place_bets,
+            calculate_bet_amount_2_func=self.betting.calculate_bet_amount_2 if self.runtime_config.betting.secondary_enabled else None,
+            place_bets_2_func=self.place_bets_2 if self.runtime_config.betting.secondary_enabled else None,
         )
 
     def analyze_recent_bets_stats(self) -> dict:

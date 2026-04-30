@@ -25,6 +25,12 @@ class RuntimeContext:
     configured_bet_targets: tuple[BetTarget, ...] = field(default_factory=lambda: (BetTarget("red", "5"),))
     bet_mode_outcome: str = "red"
     bet_mode_specifier: str = "5"
+    # Второй слот ставок (STRATEGY_2 / BASE_BET_2 / BET_TARGETS_2)
+    current_strategy_2: dict | None = None
+    betting_state_2: RuntimeBettingState | None = None
+    configured_bet_targets_2: tuple[BetTarget, ...] = field(default_factory=tuple)
+    bet_mode_outcome_2: str = ""
+    bet_mode_specifier_2: str = ""
 
     def ensure_page_reload_lock(self) -> asyncio.Lock:
         """Вернуть лениво создаваемый lock для сериализации page reload."""

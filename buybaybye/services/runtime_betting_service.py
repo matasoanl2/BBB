@@ -53,11 +53,46 @@ class BettingRuntimeService:
         self.runtime_context.betting_state["last_bet_amount"] = 0
         return current_step, max_steps, restarted
 
+    def advance_step_2_after_set_error(self) -> tuple[int, int, bool]:
+        """Сдвинуть шаг второго слота стратегии после ошибки SET."""
+
+        betting_state_2 = self.runtime_context.betting_state_2
+        current_strategy_2 = self.runtime_context.current_strategy_2
+        if betting_state_2 is None or current_strategy_2 is None:
+            return 0, 1, False
+
+        max_steps = len(current_strategy_2.get("coefficients", [1]))
+        current_step = betting_state_2.get("current_step", 0)
+
+        restarted = False
+        if current_step + 1 >= max_steps:
+            betting_state_2["current_step"] = 0
+            betting_state_2["consecutive_losses"] = 0
+            restarted = True
+        else:
+            betting_state_2["current_step"] = current_step + 1
+            betting_state_2["consecutive_losses"] = betting_state_2.get("consecutive_losses", 0) + 1
+
+        betting_state_2["last_bet_amount"] = 0
+        return current_step, max_steps, restarted
+
     def calculate_roi(self) -> float:
         """Рассчитать текущий ROI сессии по накопленному профиту и сумме ставок."""
 
         total_bet = self.runtime_context.betting_state.get("total_bet_amount", 0)
         total_profit = self.runtime_context.betting_state.get("total_profit", 0)
+        if total_bet == 0:
+            return 0.0
+        return (total_profit / total_bet) * 100
+
+    def calculate_roi_2(self) -> float:
+        """Рассчитать ROI второго слота по накопленному профиту и сумме ставок."""
+
+        betting_state_2 = self.runtime_context.betting_state_2
+        if betting_state_2 is None:
+            return 0.0
+        total_bet = betting_state_2.get("total_bet_amount", 0)
+        total_profit = betting_state_2.get("total_profit", 0)
         if total_bet == 0:
             return 0.0
         return (total_profit / total_bet) * 100
@@ -192,3 +227,21 @@ class BettingRuntimeService:
             base_bet=self.runtime_config.betting.base_bet,
             runtime_context=self.runtime_context,
         )
+
+    def calculate_bet_amount_2(self) -> float:
+        """Рассчитать размер следующей ставки по второй стратегии."""
+
+        betting_state_2 = self.runtime_context.betting_state_2
+        current_strategy_2 = self.runtime_context.current_strategy_2
+        base_bet_2 = self.runtime_config.betting.base_bet_2
+
+        if not current_strategy_2 or betting_state_2 is None:
+            return base_bet_2
+
+        current_step = betting_state_2.get("current_step", 0)
+        coefficients = current_strategy_2.get("coefficients", [1])
+        step_index = min(current_step, len(coefficients) - 1)
+        coefficient = coefficients[step_index]
+        amount = base_bet_2 * coefficient
+        betting_state_2["last_bet_amount"] = amount
+        return amount
