@@ -1,6 +1,7 @@
-name: "Exponential Growth"
+﻿name: "Exponential Growth"
 description: "Быстрый экспоненциальный рост для резкого восстановления"
 coefficients: [1, 1, 1, 2, 2, 2, 3, 4, 4, 5, 6, 7, 9, 11, 13]
+# банк: 71 базовых ставок | раундов: 15
 # банк: 71 базовых ставок | раундов: 15
 payout_coefficient: 5.7
 reset_condition: "win"

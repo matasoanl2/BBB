@@ -1,6 +1,7 @@
-name: "Cycle Recovery Rage"
+﻿name: "Cycle Recovery Rage"
 description: "Циклическая стратегия с повторяющимся паттерном восстановления"
 coefficients: [1, 1, 2, 2, 4, 1, 1, 2, 2, 4, 8, 16]
+# банк: 44 базовых ставок | раундов: 12
 # банк: 44 базовых ставок | раундов: 12
 payout_coefficient: 5.7
 reset_condition: "win"

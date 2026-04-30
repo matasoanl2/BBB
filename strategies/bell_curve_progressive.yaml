@@ -1,6 +1,7 @@
-name: "Bell Curve Progressive"
+﻿name: "Bell Curve Progressive"
 description: "Ставки растут к середине цикла, потом падают - симметричная кривая распределения для баланса"
 coefficients: [1, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2, 1, 1, 1]
+# банк: 51 базовых ставок | раундов: 15
 # банк: 51 базовых ставок | раундов: 15
 payout_coefficient: 5.7
 reset_condition: "win"

@@ -1,6 +1,7 @@
-name: "Flat Betting (Fixed Amount)"
+﻿name: "Flat Betting (Fixed Amount)"
 description: "Одинаковая ставка на каждый раунд - самая безопасная стратегия"
 coefficients: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+# банк: 15 базовых ставок | раундов: 15
 # банк: 15 базовых ставок | раундов: 15
 payout_coefficient: 5.7
 reset_condition: "win"

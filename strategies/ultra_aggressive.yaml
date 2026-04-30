@@ -1,6 +1,7 @@
-name: "Ultra Aggressive"
+﻿name: "Ultra Aggressive"
 description: "Максимальный рост для быстрого удвоения капитала (очень рискованно)"
 coefficients: [1, 2, 2, 3, 5, 7, 10, 15, 22, 33, 50, 75, 113, 170, 255]
+# банк: 763 базовых ставок | раундов: 15
 # банк: 763 базовых ставок | раундов: 15
 payout_coefficient: 5.7
 reset_condition: "win"

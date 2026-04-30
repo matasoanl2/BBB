@@ -1,6 +1,7 @@
-name: "Cycle Recovery Y6 Refined"
+﻿name: "Cycle Recovery Y6 Refined"
 description: "Рефактор cycle_recovery_y6: сохранена 21-шаговая структура, убраны шаги с отрицательной маржой (на каждом шаге при выигрыше есть плюс)"
 coefficients: [1, 2, 4, 8, 16, 7, 9, 11, 13, 16, 19, 32, 32, 37, 64, 64, 72, 128, 128, 142, 256]
+# банк: 1061 базовых ставок | раундов: 21
 # банк: 1061 базовых ставок | раундов: 21
 payout_coefficient: 5.7
 reset_condition: "win"
