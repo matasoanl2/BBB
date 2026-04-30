@@ -102,10 +102,36 @@ def build_runtime_snapshot(
         "last_round_position": betting_state.get("last_round_position") if betting_state else None,
         "freshness_state": "stale" if (is_account_balance_stale_func() if betting_state else False) else "fresh",
         "updated_at": datetime.now(timezone.utc).isoformat(),
+        "slot2": _build_slot2_payload(runtime_context, runtime_config),
     }
     if extra:
         snapshot.update(extra)
     return snapshot
+
+
+def _build_slot2_payload(runtime_context: RuntimeContext, runtime_config: RuntimeConfig) -> dict | None:
+    """Собрать статистику второго слота ставок для snapshot payload."""
+
+    if not runtime_config.betting.secondary_enabled:
+        return None
+    betting_state_2 = runtime_context.betting_state_2
+    if betting_state_2 is None:
+        return None
+    current_strategy_2 = runtime_context.current_strategy_2
+    total_bet_amount_2 = float(betting_state_2.get("total_bet_amount") or 0)
+    total_profit_2 = float(betting_state_2.get("total_profit") or 0)
+    roi_2 = (total_profit_2 / total_bet_amount_2 * 100) if total_bet_amount_2 > 0 else 0.0
+    return {
+        "strategy_name": runtime_config.betting.strategy_name_2,
+        "strategy_display_name": current_strategy_2.get("name") if current_strategy_2 else None,
+        "session_balance": float(betting_state_2.get("session_balance") or 0),
+        "total_profit": total_profit_2,
+        "total_bet_amount": total_bet_amount_2,
+        "current_step": betting_state_2.get("current_step") or 0,
+        "max_steps": len(current_strategy_2.get("coefficients", [1])) if current_strategy_2 else None,
+        "total_bets_placed": betting_state_2.get("total_bets_placed") or 0,
+        "roi": roi_2,
+    }
 
 
 def update_runtime_snapshot(*, get_db_connection_func, snapshot: dict, event_type: str) -> None:

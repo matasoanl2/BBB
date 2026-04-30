@@ -889,6 +889,39 @@
             </div>
         </section>
 
+        <section id="slot2Section" style="display:none; margin-bottom: 18px;">
+            <div class="panel" style="padding: 20px 24px;">
+                <div class="section-head" style="margin-bottom: 14px;">
+                    <div>
+                        <div class="section-title">Слот 2 — <span id="slot2StrategyName">-</span></div>
+                        <div class="section-note">Независимая стратегия второго слота ставок</div>
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px;">
+                    <div class="status-box">
+                        <label>Session Balance</label>
+                        <div class="value" id="slot2SessionBalance">-</div>
+                    </div>
+                    <div class="status-box">
+                        <label>Total Profit</label>
+                        <div class="value" id="slot2TotalProfit">-</div>
+                    </div>
+                    <div class="status-box">
+                        <label>ROI</label>
+                        <div class="value" id="slot2Roi">-</div>
+                    </div>
+                    <div class="status-box">
+                        <label>Шаг</label>
+                        <div class="value" id="slot2Step">-</div>
+                    </div>
+                    <div class="status-box">
+                        <label>Ставок в сессии</label>
+                        <div class="value" id="slot2TotalBets">-</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <section class="content-grid">
             <div class="panel chart-panel">
                 <div class="section-head">
@@ -1820,6 +1853,34 @@
             });
         }
 
+        function renderSlot2(snapshot) {
+            const slot2 = snapshot && snapshot.slot2;
+            const section = document.getElementById("slot2Section");
+            if (!section) return;
+            if (!slot2) {
+                section.style.display = "none";
+                return;
+            }
+            section.style.display = "";
+            const displayName = slot2.strategy_display_name || slot2.strategy_name || "-";
+            setText("slot2StrategyName", displayName);
+            setText("slot2SessionBalance", fmtMoney(slot2.session_balance));
+            const profit = slot2.total_profit;
+            const profitEl = document.getElementById("slot2TotalProfit");
+            if (profitEl) {
+                profitEl.textContent = fmtMoney(profit);
+                profitEl.style.color = profit > 0 ? "var(--green)" : profit < 0 ? "var(--red)" : "";
+            }
+            setText("slot2Roi", fmtNumber(slot2.roi) + "%");
+            const step = slot2.current_step;
+            const maxSteps = slot2.max_steps;
+            const stepText = (step !== null && step !== undefined && maxSteps)
+                ? `${parseInt(step) + 1}/${parseInt(maxSteps)}`
+                : (step !== null && step !== undefined ? String(parseInt(step) + 1) : "-");
+            setText("slot2Step", stepText);
+            setText("slot2TotalBets", fmtInteger(slot2.total_bets_placed));
+        }
+
         function renderBets(bets) {
             const body = document.getElementById("betsBody");
             if (!bets.length) {
@@ -2234,6 +2295,7 @@
             };
 
             renderSummary(effectivePayload.snapshot, effectivePayload.summary, effectivePayload.recentRounds);
+            renderSlot2(effectivePayload.snapshot);
             renderBets(effectivePayload.recentBets);
             renderRounds(effectivePayload.recentRounds);
             renderEvents(effectivePayload.recentEvents);

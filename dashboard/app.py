@@ -86,6 +86,7 @@ DEFAULT_SNAPSHOT = {
     "last_set_status": None,
     "last_set_error": None,
     "low_balance_pause_reason": None,
+    "slot2": None,
 }
 
 RUNTIME_ROLE_FIELDS = (
