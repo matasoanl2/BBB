@@ -594,6 +594,39 @@
             </div>
         </section>
 
+        <section id="slot2Section" style="display:none; margin-bottom: 18px;">
+            <div class="panel" style="padding: 20px 24px;">
+                <div class="section-head" style="margin-bottom: 14px;">
+                    <div>
+                        <div class="section-title">Слот 2 — <span id="slot2StrategyName">-</span></div>
+                        <div class="section-note">Независимая стратегия второго слота ставок</div>
+                    </div>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px;">
+                    <div class="panel metric-card">
+                        <div class="label">Session Balance</div>
+                        <div class="metric" id="slot2SessionBalance">-</div>
+                    </div>
+                    <div class="panel metric-card">
+                        <div class="label">Total Profit</div>
+                        <div class="metric" id="slot2TotalProfit">-</div>
+                    </div>
+                    <div class="panel metric-card">
+                        <div class="label">ROI</div>
+                        <div class="metric" id="slot2Roi">-</div>
+                    </div>
+                    <div class="panel metric-card">
+                        <div class="label">Шаг</div>
+                        <div class="metric" id="slot2Step">-</div>
+                    </div>
+                    <div class="panel metric-card">
+                        <div class="label">Ставок в сессии</div>
+                        <div class="metric" id="slot2TotalBets">-</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <section class="content-grid">
             <div class="panel chart-panel">
                 <div class="section-head">
@@ -1264,6 +1297,29 @@
             return renderResolvedDicePairHtml(fromRecentRound);
         }
 
+        function renderSlot2(snapshot) {
+            const slot2 = snapshot && snapshot.slot2;
+            const section = document.getElementById("slot2Section");
+            if (!section) return;
+            if (!slot2) { section.style.display = "none"; return; }
+            section.style.display = "";
+            const displayName = slot2.strategy_display_name || slot2.strategy_name || "-";
+            const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+            setText("slot2StrategyName", displayName);
+            setText("slot2SessionBalance", (slot2.session_balance !== undefined ? (slot2.session_balance >= 0 ? "+" : "") + Math.round(slot2.session_balance) + "р" : "-"));
+            const profitEl = document.getElementById("slot2TotalProfit");
+            if (profitEl) {
+                const p = slot2.total_profit;
+                profitEl.textContent = p !== undefined ? (p >= 0 ? "+" : "") + Math.round(p) + "р" : "-";
+                profitEl.style.color = p > 0 ? "var(--green, #4caf50)" : p < 0 ? "var(--red, #f44336)" : "";
+            }
+            setText("slot2Roi", slot2.roi !== undefined ? slot2.roi.toFixed(2) + "%" : "-");
+            const step = slot2.current_step;
+            const maxSteps = slot2.max_steps;
+            setText("slot2Step", (step !== null && step !== undefined && maxSteps) ? `${parseInt(step)+1}/${parseInt(maxSteps)}` : "-");
+            setText("slot2TotalBets", slot2.total_bets_placed !== undefined ? String(slot2.total_bets_placed) : "-");
+        }
+
         function renderSummary(snapshot, summary, recentRounds = []) {
             setText("strategyName", snapshot.strategy_display_name || "Нет активной стратегии");
             const currentTargetNode = document.getElementById("currentTarget");
@@ -1627,6 +1683,7 @@
             };
 
             renderSummary(effectivePayload.snapshot, effectivePayload.summary, effectivePayload.recentRounds);
+            renderSlot2(effectivePayload.snapshot);
             renderBets(effectivePayload.recentBets);
             renderRounds(effectivePayload.recentRounds);
             chartState.balanceSeries = effectivePayload.balanceSeries;
