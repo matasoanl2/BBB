@@ -659,6 +659,8 @@ async def place_bets(
 
             if was_low_balance_paused:
                 _clear_low_balance_pause_state(betting_state)
+                betting_state["current_step"] = 0
+                betting_state["consecutive_losses"] = 0
                 _print_bet_system_log(
                     runtime_config=runtime_config,
                     event="set_resume_low_balance",
