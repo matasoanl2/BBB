@@ -118,16 +118,30 @@ def _build_slot2_payload(runtime_context: RuntimeContext, runtime_config: Runtim
     if betting_state_2 is None:
         return None
     current_strategy_2 = runtime_context.current_strategy_2
+    configured_targets_2 = [target.token for target in runtime_context.configured_bet_targets_2]
+    strategy_coefficients_2 = list(current_strategy_2.get("coefficients", [1])) if current_strategy_2 else [1]
+    multi_bet_enabled_2 = len(runtime_context.configured_bet_targets_2) > 1
     total_bet_amount_2 = float(betting_state_2.get("total_bet_amount") or 0)
     total_profit_2 = float(betting_state_2.get("total_profit") or 0)
     roi_2 = (total_profit_2 / total_bet_amount_2 * 100) if total_bet_amount_2 > 0 else 0.0
     return {
+        "configured_targets": configured_targets_2,
+        "current_outcome": runtime_context.bet_mode_outcome_2,
+        "current_specifier": runtime_context.bet_mode_specifier_2,
+        "multi_bet_enabled": multi_bet_enabled_2,
+        "base_bet_2": float(runtime_config.betting.base_bet_2 or 0),
+        "base_bet": float(runtime_config.betting.base_bet_2 or 0),
+        "strategy_coefficients": strategy_coefficients_2,
+        "coefficients": strategy_coefficients_2,
+        "last_set_amount": float(betting_state_2.get("last_set_amount") or 0),
+        "last_bet_amount": float(betting_state_2.get("last_bet_amount") or 0),
         "strategy_name": runtime_config.betting.strategy_name_2,
         "strategy_display_name": current_strategy_2.get("name") if current_strategy_2 else None,
         "session_balance": float(betting_state_2.get("session_balance") or 0),
         "total_profit": total_profit_2,
         "total_bet_amount": total_bet_amount_2,
         "current_step": betting_state_2.get("current_step") or 0,
+        "consecutive_losses": betting_state_2.get("consecutive_losses") or 0,
         "max_steps": len(current_strategy_2.get("coefficients", [1])) if current_strategy_2 else None,
         "total_bets_placed": betting_state_2.get("total_bets_placed") or 0,
         "roi": roi_2,

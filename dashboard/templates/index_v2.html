@@ -178,13 +178,6 @@
             letter-spacing: -0.01em;
         }
 
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: repeat(5, minmax(0, 1fr));
-            gap: 12px;
-            margin-bottom: 14px;
-        }
-
         .metric-card {
             padding: 16px;
             min-height: 108px;
@@ -261,11 +254,6 @@
             font-size: 11px;
             letter-spacing: 0.03em;
         }
-
-        .metric-green { background: linear-gradient(180deg, var(--green-soft), rgba(255, 250, 243, 0.88)); }
-        .metric-blue { background: linear-gradient(180deg, var(--blue-soft), rgba(255, 250, 243, 0.88)); }
-        .metric-amber { background: linear-gradient(180deg, var(--amber-soft), rgba(255, 250, 243, 0.88)); }
-        .metric-red { background: linear-gradient(180deg, var(--red-soft), rgba(255, 250, 243, 0.88)); }
 
         .content-grid {
             display: grid;
@@ -558,10 +546,6 @@
             .content-grid {
                 grid-template-columns: 1fr;
             }
-
-            .metrics-grid {
-                grid-template-columns: repeat(3, minmax(0, 1fr));
-            }
         }
 
         @media (max-width: 760px) {
@@ -569,7 +553,6 @@
                 width: min(100% - 18px, 1360px);
             }
 
-            .metrics-grid,
             .status-strip {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
@@ -580,7 +563,6 @@
         }
 
         @media (max-width: 560px) {
-            .metrics-grid,
             .status-strip {
                 grid-template-columns: 1fr;
             }
@@ -611,12 +593,12 @@
             <div class="panel topbar-side">
                 <div class="status-strip">
                     <div class="status-box">
-                        <label>Стратегия</label>
-                        <div class="value" id="strategyName">-</div>
+                        <label>Real Balance (RB)</label>
+                        <div class="value" id="realBalanceTopbar">-</div>
                     </div>
                     <div class="status-box">
-                        <label>Цель</label>
-                        <div class="value" id="currentTarget">-</div>
+                        <label>Session Balance (SB)</label>
+                        <div class="value" id="sessionBalanceTopbar">-</div>
                     </div>
                     <div class="status-box refresh-progress" id="updatedAtBox">
                         <label>Последнее обновление</label>
@@ -649,12 +631,12 @@
                         <div class="sub">Кубик/кубики цели и эффективная сумма шага</div>
                     </div>
                     <div class="panel metric-card">
-                        <div class="label">Session Balance</div>
-                        <div class="metric" id="slot1SessionBalance">-</div>
+                        <div class="label">Slot Margin</div>
+                        <div class="metric" id="slot1SlotMargin">-</div>
                     </div>
                     <div class="panel metric-card">
-                        <div class="label">Total Profit</div>
-                        <div class="metric" id="slot1TotalProfit">-</div>
+                        <div class="label">Loss Streak</div>
+                        <div class="metric" id="slot1LossStreak">-</div>
                     </div>
                     <div class="panel metric-card">
                         <div class="label">ROI</div>
@@ -669,34 +651,6 @@
                         <div class="metric" id="slot1TotalBets">-</div>
                     </div>
                 </div>
-            </div>
-        </section>
-
-        <section class="metrics-grid">
-            <div class="panel metric-card metric-blue">
-                <div class="label">Real Balance</div>
-                <div class="metric" id="realBalance">-</div>
-                <div class="sub">Баланс из accounting_ws</div>
-            </div>
-            <div class="panel metric-card metric-blue">
-                <div class="label">Шаг</div>
-                <div class="metric" id="stepLabel">-</div>
-                <div class="sub">Позиция в прогрессии</div>
-            </div>
-            <div class="panel metric-card metric-red">
-                <div class="label">Loss Streak</div>
-                <div class="metric" id="lossStreak">-</div>
-                <div class="sub">Подряд проигранных результатов</div>
-            </div>
-            <div class="panel metric-card metric-amber">
-                <div class="label">Win Rate</div>
-                <div class="metric" id="winRate">-</div>
-                <div class="sub">Resolved ставки из БД</div>
-            </div>
-            <div class="panel metric-card metric-amber">
-                <div class="label">Всего ставок</div>
-                <div class="metric" id="sessionTotalBets">-</div>
-                <div class="sub">Текущая сессия</div>
             </div>
         </section>
 
@@ -718,12 +672,12 @@
                         <div class="sub">Кубик/кубики цели и эффективная сумма шага</div>
                     </div>
                     <div class="panel metric-card">
-                        <div class="label">Session Balance</div>
-                        <div class="metric" id="slot2SessionBalance">-</div>
+                        <div class="label">Slot Margin</div>
+                        <div class="metric" id="slot2SlotMargin">-</div>
                     </div>
                     <div class="panel metric-card">
-                        <div class="label">Total Profit</div>
-                        <div class="metric" id="slot2TotalProfit">-</div>
+                        <div class="label">Loss Streak</div>
+                        <div class="metric" id="slot2LossStreak">-</div>
                     </div>
                     <div class="panel metric-card">
                         <div class="label">ROI</div>
@@ -890,13 +844,6 @@
             const number = Number(value);
             if (Number.isNaN(number)) return "-";
             return `${Math.round(number)}р`;
-        };
-
-        const fmtNumber = (value) => {
-            if (value === null || value === undefined || value === "") return "-";
-            const number = Number(value);
-            if (Number.isNaN(number)) return "-";
-            return `${number.toFixed(1)}%`;
         };
 
         const fmtInteger = (value) => {
@@ -1367,44 +1314,6 @@
             return `status-pill status-${normalized} status-tone-${tone}`;
         }
 
-        function formatTarget(snapshot) {
-            const configuredTargets = Array.isArray(snapshot.configured_targets)
-                ? snapshot.configured_targets.filter((value) => value !== null && value !== undefined && `${value}`.trim() !== "")
-                : [];
-            if (configuredTargets.length > 1 || snapshot.multi_bet_enabled) {
-                return `${configuredTargets.join(", ")} (один раунд)`;
-            }
-
-            const currentOutcome = snapshot.current_outcome;
-            if (!currentOutcome) {
-                return "-";
-            }
-
-            const configuredOutcome = snapshot.configured_outcome || currentOutcome;
-            const configuredSpecifiers = Array.isArray(snapshot.configured_specifiers)
-                ? snapshot.configured_specifiers.filter((value) => value !== null && value !== undefined && `${value}`.trim() !== "")
-                : [];
-
-            if (String(configuredOutcome).toLowerCase() === "double") {
-                return "DOUBLE";
-            }
-
-            if (snapshot.specifier_rotation_enabled && configuredSpecifiers.length > 1) {
-                const activeSpecifier = snapshot.current_specifier || configuredSpecifiers[0];
-                return `${String(configuredOutcome).toUpperCase()} ${configuredSpecifiers.join(", ")} (по кругу, сейчас ${activeSpecifier})`;
-            }
-
-            return `${String(currentOutcome).toUpperCase()} ${snapshot.current_specifier || ""}`.trim();
-        }
-
-        function renderCurrentTargetHtml(snapshot) {
-            const targetDie = parseTargetDie(formatTarget(snapshot));
-            if (!targetDie) {
-                return "-";
-            }
-            return renderDieHtml(targetDie.value, targetDie.tone);
-        }
-
         function normalizeTargetToken(token) {
             if (token === null || token === undefined) {
                 return "";
@@ -1445,10 +1354,6 @@
                 source?.strategy_config?.coefficients,
                 source?.current_strategy?.coefficients,
                 source?.slot2_coefficients,
-                context.summary?.coefficients,
-                context.summary?.strategy_coefficients,
-                context.summary?.strategy?.coefficients,
-                context.summary?.slot2_coefficients,
                 context.rootSnapshot?.coefficients,
                 context.rootSnapshot?.strategy_coefficients,
                 context.rootSnapshot?.strategy?.coefficients,
@@ -1503,9 +1408,6 @@
                     source?.baseBet,
                     source?.bet_base,
                     source?.bet_base_amount,
-                    context.summary?.base_bet_2,
-                    context.summary?.slot2_base_bet,
-                    context.summary?.base_bet,
                     context.rootSnapshot?.base_bet_2,
                     context.rootSnapshot?.slot2_base_bet,
                     context.rootSnapshot?.slot2?.base_bet_2,
@@ -1518,8 +1420,6 @@
                 source?.baseBet,
                 source?.bet_base,
                 source?.bet_base_amount,
-                context.summary?.base_bet,
-                context.summary?.baseBet,
                 context.rootSnapshot?.base_bet,
                 context.rootSnapshot?.baseBet,
                 context.rootSnapshot?.bet_base,
@@ -1529,9 +1429,7 @@
 
         function resolveEffectiveBetAmount(source, context = {}, slotKey = "slot1") {
             const factualAmount = firstFiniteNumber([
-                context.summary?.last_set_amount,
                 source?.last_set_amount,
-                context.summary?.last_bet_amount,
                 source?.last_bet_amount,
             ]);
             if (factualAmount !== null) {
@@ -1554,7 +1452,7 @@
             return baseBet * coefficient;
         }
 
-        function renderSlotBetCard(slotPrefix, sourceSnapshot, summary, rootSnapshot) {
+        function renderSlotBetCard(slotPrefix, sourceSnapshot, rootSnapshot) {
             const diceNode = document.getElementById(`${slotPrefix}BetDice`);
             const amountNode = document.getElementById(`${slotPrefix}BetAmount`);
             if (!diceNode || !amountNode) {
@@ -1571,7 +1469,6 @@
             }
 
             const amount = resolveEffectiveBetAmount(sourceSnapshot, {
-                summary,
                 rootSnapshot,
             }, slotPrefix === "slot2" ? "slot2" : "slot1");
             amountNode.textContent = fmtMoney(amount);
@@ -1597,23 +1494,55 @@
             return `<span class="target-double">${escapeHtml(token || "?")}</span>`;
         }
 
-        function renderSlot1(snapshot, summary) {
+        function formatSignedMoney(value) {
+            const numericValue = toFiniteNumber(value);
+            if (numericValue === null) {
+                return "-";
+            }
+            return `${numericValue >= 0 ? "+" : ""}${Math.round(numericValue)}р`;
+        }
+
+        function resolveSlotLossStreak(slotSnapshot) {
+            return firstFiniteNumber([
+                slotSnapshot?.consecutive_losses,
+                slotSnapshot?.loss_streak,
+                slotSnapshot?.current_loss_streak,
+            ]);
+        }
+
+        function resolveSessionBalanceFromSlotMargins(snapshot) {
+            const slot1Margin = toFiniteNumber(snapshot?.total_profit);
+            const slot2Snapshot = snapshot?.slot2;
+
+            if (!slot2Snapshot) {
+                return slot1Margin;
+            }
+
+            const slot2Margin = toFiniteNumber(slot2Snapshot.total_profit);
+            if (slot1Margin === null && slot2Margin === null) {
+                return null;
+            }
+
+            return (slot1Margin || 0) + (slot2Margin || 0);
+        }
+
+        function renderSlot1(snapshot) {
             const strategyNode = document.getElementById("slot1StrategyName");
             if (!strategyNode) {
                 return;
             }
 
             strategyNode.textContent = snapshot?.strategy_display_name || snapshot?.strategy_name || "-";
-            renderSlotBetCard("slot1", snapshot, summary, snapshot);
-
-            setText("slot1SessionBalance", fmtMoney(snapshot?.session_balance ?? summary?.session_balance));
+            renderSlotBetCard("slot1", snapshot, snapshot);
 
             const totalProfit = toFiniteNumber(snapshot?.total_profit);
-            const slot1ProfitNode = document.getElementById("slot1TotalProfit");
+            const slot1ProfitNode = document.getElementById("slot1SlotMargin");
             if (slot1ProfitNode) {
-                slot1ProfitNode.textContent = totalProfit !== null ? `${totalProfit >= 0 ? "+" : ""}${Math.round(totalProfit)}р` : "-";
+                slot1ProfitNode.textContent = formatSignedMoney(totalProfit);
                 slot1ProfitNode.style.color = totalProfit > 0 ? "var(--green, #4caf50)" : totalProfit < 0 ? "var(--red, #f44336)" : "";
             }
+
+            setText("slot1LossStreak", fmtInteger(resolveSlotLossStreak(snapshot)));
 
             const totalBetAmount = toFiniteNumber(snapshot?.total_bet_amount);
             const roi = totalProfit !== null && totalBetAmount !== null && totalBetAmount > 0
@@ -1623,8 +1552,8 @@
 
             const step = snapshot?.current_step;
             const maxSteps = snapshot?.max_steps;
-            setText("slot1Step", (step !== null && step !== undefined && maxSteps) ? `${parseInt(step, 10) + 1}/${parseInt(maxSteps, 10)}` : "-");
-            setText("slot1TotalBets", snapshot?.total_bets_placed !== undefined ? String(snapshot.total_bets_placed) : fmtInteger(summary?.session_total_bets));
+            setText("slot1Step", (step !== null && step !== undefined && maxSteps !== null && maxSteps !== undefined) ? `${parseInt(step, 10) + 1}/${parseInt(maxSteps, 10)}` : "-");
+            setText("slot1TotalBets", snapshot?.total_bets_placed !== undefined ? String(snapshot.total_bets_placed) : "-");
         }
 
         function renderLastRoundResultHtml(snapshot, recentRounds = []) {
@@ -1660,35 +1589,38 @@
             const displayName = slot2.strategy_display_name || slot2.strategy_name || "-";
             const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
             setText("slot2StrategyName", displayName);
-            renderSlotBetCard("slot2", slot2, null, snapshot);
-            setText("slot2SessionBalance", (slot2.session_balance !== undefined ? (slot2.session_balance >= 0 ? "+" : "") + Math.round(slot2.session_balance) + "р" : "-"));
-            const profitEl = document.getElementById("slot2TotalProfit");
+            renderSlotBetCard("slot2", slot2, snapshot);
+
+            const profitEl = document.getElementById("slot2SlotMargin");
             if (profitEl) {
-                const p = slot2.total_profit;
-                profitEl.textContent = p !== undefined ? (p >= 0 ? "+" : "") + Math.round(p) + "р" : "-";
+                const p = toFiniteNumber(slot2.total_profit);
+                profitEl.textContent = formatSignedMoney(p);
                 profitEl.style.color = p > 0 ? "var(--green, #4caf50)" : p < 0 ? "var(--red, #f44336)" : "";
             }
-            setText("slot2Roi", slot2.roi !== undefined ? slot2.roi.toFixed(2) + "%" : "-");
+
+            setText("slot2LossStreak", fmtInteger(resolveSlotLossStreak(slot2)));
+
+            const slot2Profit = toFiniteNumber(slot2.total_profit);
+            const slot2TotalBetAmount = toFiniteNumber(slot2.total_bet_amount);
+            const slot2Roi = slot2Profit !== null && slot2TotalBetAmount !== null && slot2TotalBetAmount > 0
+                ? (slot2Profit / slot2TotalBetAmount) * 100
+                : toFiniteNumber(slot2.roi);
+            setText("slot2Roi", slot2Roi !== null ? `${slot2Roi.toFixed(2)}%` : "-");
+
             const step = slot2.current_step;
             const maxSteps = slot2.max_steps;
-            setText("slot2Step", (step !== null && step !== undefined && maxSteps) ? `${parseInt(step)+1}/${parseInt(maxSteps)}` : "-");
+            setText("slot2Step", (step !== null && step !== undefined && maxSteps !== null && maxSteps !== undefined) ? `${parseInt(step, 10) + 1}/${parseInt(maxSteps, 10)}` : "-");
             setText("slot2TotalBets", slot2.total_bets_placed !== undefined ? String(slot2.total_bets_placed) : "-");
         }
 
         function renderSummary(snapshot, summary, recentRounds = []) {
-            setText("strategyName", snapshot.strategy_display_name || "Нет активной стратегии");
-            const currentTargetNode = document.getElementById("currentTarget");
-            if (currentTargetNode) {
-                currentTargetNode.innerHTML = renderCurrentTargetHtml(snapshot);
-            }
             setText("updatedAt", fmtDateTime(snapshot.updated_at));
             setText("freshnessState", summary.freshness_state ? (summary.freshness_state === "stale" ? "Stale" : "Fresh") : "-");
-            setText("realBalance", fmtMoney(summary.account_balance));
-            setText("stepLabel", summary.step_label || "-");
-            setText("lossStreak", fmtInteger(summary.consecutive_losses));
-            setText("winRate", fmtNumber(summary.win_rate));
-            setText("sessionTotalBets", fmtInteger(summary.session_total_bets));
-            renderSlot1(snapshot, summary);
+            const realBalanceTopbar = firstFiniteNumber([summary?.account_balance, snapshot?.account_balance]);
+            setText("realBalanceTopbar", fmtMoney(realBalanceTopbar));
+            const sessionBalanceTopbar = resolveSessionBalanceFromSlotMargins(snapshot);
+            setText("sessionBalanceTopbar", formatSignedMoney(sessionBalanceTopbar));
+            renderSlot1(snapshot);
 
             if (summary.freshness_state === "stale") {
                 renderAlert("Accounting balance устарел или поток данных деградировал", "warn");
