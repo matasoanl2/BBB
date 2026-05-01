@@ -747,6 +747,75 @@ def _get_recent_events(limit: int = 20, preferred_role: str | None = None, conn=
     return events
 
 
+def _get_slot_margin_series(slot: int = 1, limit: int = 200, conn=None) -> list[dict[str, Any]]:
+    """Построить кумулятивный ряд маржи для указанного слота по resolved ставкам."""
+
+    rows = _fetch_all(
+        """
+        SELECT id, timestamp, amount, status, strategy
+        FROM bet_history
+        WHERE slot = %s AND status IN ('win', 'loss')
+        ORDER BY id DESC
+        LIMIT %s
+        """,
+        (slot, limit),
+        conn=conn,
+    )
+    rows.reverse()
+
+    cumulative = 0.0
+    result = []
+    for index, row in enumerate(rows, start=1):
+        amount = float(row.get("amount") or 0.0)
+        status = row.get("status")
+        # Используем стандартный payout 5.7 — точное значение per-strategy не критично для графика
+        if status == "win":
+            margin = amount * 4.7
+        else:
+            margin = -amount
+        cumulative += margin
+        result.append({
+            "index": index,
+            "timestamp": _iso(row.get("timestamp")),
+            "margin": round(margin, 2),
+            "cumulative": round(cumulative, 2),
+            "status": status,
+        })
+    return result
+
+
+def _get_slot_dice_series(slot: int = 1, limit: int = 120, conn=None) -> list[dict[str, Any]]:
+    """Вернуть последние resolved ставки слота с dice-результатами для scatter-графика."""
+
+    rows = _fetch_all(
+        """
+        SELECT id, timestamp, outcome, specifier, result_dice_color, result_dice_value, status
+        FROM bet_history
+        WHERE slot = %s AND status IN ('win', 'loss')
+              AND result_dice_value IS NOT NULL
+        ORDER BY id DESC
+        LIMIT %s
+        """,
+        (slot, limit),
+        conn=conn,
+    )
+    rows.reverse()
+
+    result = []
+    for index, row in enumerate(rows, start=1):
+        result.append({
+            "index": index,
+            "timestamp": _iso(row.get("timestamp")),
+            "outcome": row.get("outcome"),
+            "specifier": row.get("specifier"),
+            "dice_color": row.get("result_dice_color"),
+            "dice_value": row.get("result_dice_value"),
+            "status": row.get("status"),
+            "is_win": row.get("status") == "win",
+        })
+    return result
+
+
 def _build_dashboard_payload() -> dict[str, Any]:
     """Собрать полный payload dashboard через одно подключение к БД."""
 
@@ -769,6 +838,10 @@ def _build_dashboard_payload() -> dict[str, Any]:
             "latest_round": recent_rounds[0] if recent_rounds else None,
             "balance_series": _get_balance_series(preferred_role=preferred_role, conn=conn),
             "result_curve": _get_result_curve(conn=conn),
+            "slot1_margin_series": _get_slot_margin_series(slot=1, conn=conn),
+            "slot1_dice_series": _get_slot_dice_series(slot=1, conn=conn),
+            "slot2_margin_series": _get_slot_margin_series(slot=2, conn=conn),
+            "slot2_dice_series": _get_slot_dice_series(slot=2, conn=conn),
         }
     except psycopg2.OperationalError:
         broken = True

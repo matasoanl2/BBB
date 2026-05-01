@@ -1,0 +1,6 @@
+name: "Cycle Recovery Y6 Refined 20x1500 Margin Plus Balanced"
+description: "Версия cycle_recovery_y6_refined_20_1500 с заметным усилением маржи на первых 10 шагах; на каждом шаге при выигрыше маржа не меньше ставки текущего шага"
+coefficients: [1, 1, 1, 1, 2, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 25, 32, 41, 52, 66]
+# банк: 308 базовых ставок | раундов: 20
+payout_coefficient: 5.7
+reset_condition: "win"

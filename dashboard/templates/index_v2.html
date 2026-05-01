@@ -650,10 +650,24 @@
                         <div class="metric" id="slot1TotalBets">-</div>
                     </div>
                 </div>
+                <div class="slot-charts-row" style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px;">
+                    <div>
+                        <div class="section-note" style="margin-bottom:6px;">Маржа (кумулятивно)</div>
+                        <div class="chart-shell" style="height:140px;">
+                            <svg id="slot1MarginChart" viewBox="0 0 600 140" preserveAspectRatio="none" style="width:100%;height:100%;"></svg>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="section-note" style="margin-bottom:6px;">Выпадение кубика</div>
+                        <div class="chart-shell" style="height:140px;">
+                            <svg id="slot1DiceChart" viewBox="0 0 600 140" preserveAspectRatio="none" style="width:100%;height:100%;"></svg>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
 
-        <section id="slot2Section" style="display:none; margin-bottom: 18px;">
+        <section id="slot2Section" style="margin-bottom: 14px;">
             <div class="panel" style="padding: 20px 24px;">
                 <div class="section-head" style="margin-bottom: 14px;">
                     <div>
@@ -690,10 +704,22 @@
                         <div class="metric" id="slot2TotalBets">-</div>
                     </div>
                 </div>
+                <div class="slot-charts-row" style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:16px;">
+                    <div>
+                        <div class="section-note" style="margin-bottom:6px;">Маржа (кумулятивно)</div>
+                        <div class="chart-shell" style="height:140px;">
+                            <svg id="slot2MarginChart" viewBox="0 0 600 140" preserveAspectRatio="none" style="width:100%;height:100%;"></svg>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="section-note" style="margin-bottom:6px;">Выпадение кубика</div>
+                        <div class="chart-shell" style="height:140px;">
+                            <svg id="slot2DiceChart" viewBox="0 0 600 140" preserveAspectRatio="none" style="width:100%;height:100%;"></svg>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
-
-        <section class="content-grid">
             <div class="panel chart-panel">
                 <div class="section-head">
                     <div>
@@ -1194,13 +1220,22 @@
             return true;
         }
 
+        function isEmptyDisplayValue(value) {
+            return value === null || value === undefined || value === "" || value === "-";
+        }
+
         function mergeMeaningfulObject(incoming, key, isMeaningfulObject) {
             const previous = lastDataState[key] && typeof lastDataState[key] === "object" ? lastDataState[key] : {};
             const source = incoming && typeof incoming === "object" ? incoming : {};
             const merged = { ...previous };
 
             Object.entries(source).forEach(([field, value]) => {
-                if (isMeaningfulFieldValue(value) || !(field in merged)) {
+                const canFillEmptyWithZero = typeof value === "number"
+                    && Number.isFinite(value)
+                    && value === 0
+                    && isEmptyDisplayValue(merged[field]);
+
+                if (isMeaningfulFieldValue(value) || canFillEmptyWithZero || !(field in merged)) {
                     merged[field] = value;
                 }
             });
@@ -1946,6 +1981,132 @@
             setText(metaId, `${chartSeries.length} точек`);
         }
 
+        function renderSlotMarginChart(series, svgId) {
+            const svg = document.getElementById(svgId);
+            if (!svg) return;
+            if (!series || !series.length) {
+                svg.innerHTML = `<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#667062' font-size='13'>Нет данных</text>`;
+                return;
+            }
+            const W = 600, H = 140;
+            const pad = { top: 12, right: 10, bottom: 22, left: 52 };
+            const pw = W - pad.left - pad.right;
+            const ph = H - pad.top - pad.bottom;
+            const values = series.map((p) => p.cumulative);
+            const minV = Math.min(...values);
+            const maxV = Math.max(...values);
+            const range = Math.max(maxV - minV, 1);
+            const xOf = (i) => pad.left + (i / Math.max(series.length - 1, 1)) * pw;
+            const yOf = (v) => pad.top + (1 - (v - minV) / range) * ph;
+            const zeroY = yOf(0);
+
+            let pathD = "";
+            for (let i = 0; i < series.length; i++) {
+                const x = xOf(i), y = yOf(series[i].cumulative);
+                pathD += i === 0 ? `M ${x.toFixed(1)} ${y.toFixed(1)}` : ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+            }
+
+            const strokeColor = (values[values.length - 1] || 0) >= 0 ? "#1f7a4d" : "#b64432";
+            const axisColor = "rgba(32,37,29,0.12)";
+            const labelColor = "#667062";
+
+            const yLabelVal = [maxV, (maxV + minV) / 2, minV];
+            let yLabels = "";
+            yLabelVal.forEach((v) => {
+                const y = yOf(v);
+                yLabels += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${(W - pad.right).toFixed(1)}" y2="${y.toFixed(1)}" stroke="${axisColor}" stroke-width="1"></line>`;
+                yLabels += `<text x="${(pad.left - 5).toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="end" fill="${labelColor}" font-size="10" font-weight="700">${Math.round(v)}р</text>`;
+            });
+
+            const zeroLine = (minV < 0 && maxV > 0)
+                ? `<line x1="${pad.left}" y1="${zeroY.toFixed(1)}" x2="${(W - pad.right).toFixed(1)}" y2="${zeroY.toFixed(1)}" stroke="rgba(32,37,29,0.28)" stroke-width="1" stroke-dasharray="4 4"></line>`
+                : "";
+
+            const fmtT = (ts) => { if (!ts) return ""; const d = new Date(ts); return isNaN(d) ? "" : d.toLocaleTimeString("ru-RU", {hour:"2-digit", minute:"2-digit"}); };
+            const xTickIdx = [0, Math.floor((series.length - 1) / 2), series.length - 1].filter((v, i, a) => a.indexOf(v) === i);
+            let xLabels = "";
+            xTickIdx.forEach((idx) => {
+                const x = xOf(idx);
+                const anchor = idx === 0 ? "start" : idx === series.length - 1 ? "end" : "middle";
+                const label = fmtT(series[idx]?.timestamp);
+                if (label) xLabels += `<text x="${x.toFixed(1)}" y="${(H - 4).toFixed(1)}" text-anchor="${anchor}" fill="${labelColor}" font-size="9">${label}</text>`;
+            });
+
+            svg.innerHTML = `
+                <line x1="${pad.left}" y1="${pad.top}" x2="${pad.left}" y2="${(H - pad.bottom).toFixed(1)}" stroke="${axisColor}" stroke-width="1.2"></line>
+                <line x1="${pad.left}" y1="${(H - pad.bottom).toFixed(1)}" x2="${(W - pad.right).toFixed(1)}" y2="${(H - pad.bottom).toFixed(1)}" stroke="${axisColor}" stroke-width="1.2"></line>
+                ${yLabels}
+                ${xLabels}
+                ${zeroLine}
+                <path d="${pathD}" fill="none" stroke="${strokeColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"></path>
+            `;
+        }
+
+        function renderSlotDiceChart(series, svgId) {
+            const svg = document.getElementById(svgId);
+            if (!svg) return;
+            if (!series || !series.length) {
+                svg.innerHTML = `<text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#667062' font-size='13'>Нет данных</text>`;
+                return;
+            }
+            const W = 600, H = 140;
+            const pad = { top: 14, right: 10, bottom: 22, left: 28 };
+            const pw = W - pad.left - pad.right;
+            const ph = H - pad.top - pad.bottom;
+            const xOf = (i) => pad.left + (i / Math.max(series.length - 1, 1)) * pw;
+            const yOf = (v) => pad.top + (1 - (v - 1) / 5) * ph;
+
+            // Горизонтальные пунктирные линии для каждого значения кубика (1-6)
+            let gridLines = "";
+            for (let v = 1; v <= 6; v++) {
+                const y = yOf(v);
+                gridLines += `<line x1="${pad.left}" y1="${y.toFixed(1)}" x2="${(W - pad.right).toFixed(1)}" y2="${y.toFixed(1)}" stroke="rgba(32,37,29,0.07)" stroke-width="1"></line>`;
+                gridLines += `<text x="${(pad.left - 4).toFixed(1)}" y="${(y + 4).toFixed(1)}" text-anchor="end" fill="#667062" font-size="9">${v}</text>`;
+            }
+
+            // Пунктирная линия через все точки ставок
+            let dashPathD = "";
+            for (let i = 0; i < series.length; i++) {
+                const v = series[i].dice_value;
+                if (v === null || v === undefined) continue;
+                const x = xOf(i), y = yOf(v);
+                dashPathD += dashPathD === "" ? `M ${x.toFixed(1)} ${y.toFixed(1)}` : ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+            }
+
+            // Точки: маленькие серые для проигрышей, большие зелёные для выигрышей
+            let lossDots = "", winDots = "";
+            for (let i = 0; i < series.length; i++) {
+                const p = series[i];
+                const v = p.dice_value;
+                if (v === null || v === undefined) continue;
+                const x = xOf(i).toFixed(1), y = yOf(v).toFixed(1);
+                if (p.is_win) {
+                    winDots += `<circle cx="${x}" cy="${y}" r="5" fill="#1f7a4d" stroke="#fff" stroke-width="1.5"></circle>`;
+                } else {
+                    lossDots += `<circle cx="${x}" cy="${y}" r="3" fill="#b0bbb8" opacity="0.7"></circle>`;
+                }
+            }
+
+            const fmtT2 = (ts) => { if (!ts) return ""; const d = new Date(ts); return isNaN(d) ? "" : d.toLocaleTimeString("ru-RU", {hour:"2-digit", minute:"2-digit"}); };
+            const xTick2 = [0, Math.floor((series.length - 1) / 2), series.length - 1].filter((v, i, a) => a.indexOf(v) === i);
+            const axisY2 = H - pad.bottom;
+            let xLabels2 = `<line x1="${pad.left}" y1="${axisY2}" x2="${(W - pad.right).toFixed(1)}" y2="${axisY2}" stroke="rgba(32,37,29,0.12)" stroke-width="1"></line>`;
+            xTick2.forEach((idx) => {
+                const x = xOf(idx);
+                const anchor = idx === 0 ? "start" : idx === series.length - 1 ? "end" : "middle";
+                const label = fmtT2(series[idx]?.timestamp);
+                if (label) xLabels2 += `<text x="${x.toFixed(1)}" y="${(H - 4).toFixed(1)}" text-anchor="${anchor}" fill="#667062" font-size="9">${label}</text>`;
+            });
+
+            svg.innerHTML = `
+                ${gridLines}
+                ${xLabels2}
+                <path d="${dashPathD}" fill="none" stroke="rgba(45,106,140,0.45)" stroke-width="1.5" stroke-dasharray="5 5"></path>
+                ${lossDots}
+                ${winDots}
+            `;
+        }
+
         function renderCharts(series) {
             const sessionBloodModeEnabled = chartState.bloodModeEnabled;
             renderBalanceChart(series, "sessionBalanceChart", "sessionChartMeta", (item) => item.session_balance, sessionBloodModeEnabled ? "#8f1010" : "#1f7a4d", "Пока нет данных session balance", {
@@ -1977,6 +2138,10 @@
             renderRounds(effectivePayload.recentRounds);
             chartState.balanceSeries = effectivePayload.balanceSeries;
             renderCharts(chartState.balanceSeries);
+            renderSlotMarginChart(dashboardData?.slot1_margin_series || [], "slot1MarginChart");
+            renderSlotDiceChart(dashboardData?.slot1_dice_series || [], "slot1DiceChart");
+            renderSlotMarginChart(dashboardData?.slot2_margin_series || [], "slot2MarginChart");
+            renderSlotDiceChart(dashboardData?.slot2_dice_series || [], "slot2DiceChart");
             markRefreshCompleted();
         }
 

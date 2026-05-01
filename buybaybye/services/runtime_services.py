@@ -472,10 +472,10 @@ class RuntimeServices:
 
         return self.betting.get_best_combination(stats)
 
-    def update_dynamic_bet(self) -> None:
-        """Обновить текущую цель ставки по правилам dynamic betting."""
+    def update_dynamic_bet(self, excluded_tokens: set[str] | None = None) -> tuple[str, str]:
+        """Обновить текущую цель ставки по правилам dynamic betting с optional anti-overlap."""
 
-        self.betting.update_dynamic_bet()
+        return self.betting.update_dynamic_bet(excluded_tokens=excluded_tokens)
 
     def generate_random_bet(self) -> tuple[str, str]:
         """Сгенерировать fallback-ставку после затяжной серии проигрышей."""

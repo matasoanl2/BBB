@@ -458,20 +458,21 @@ def update_dynamic_bet(
         )
 
         if changed:
-            print(f"\n{color_cyan}📊 ДИНАМИЧЕСКОЕ ОБНОВЛЕНИЕ MULTI-TARGET (ход {step_counter}):{color_reset}", flush=True)
-            sorted_stats = sorted(stats.items(), key=lambda item: item[1]["frequency"], reverse=True)
-            for index, (combo, data) in enumerate(sorted_stats[:5], 1):
-                display_combo = format_combo_pretty_func(combo)
-                print(f"  {index}. {display_combo:20} выпал {data['freq']:2d} раз ({data['frequency']:5.1f}%)", flush=True)
+            if dynamic_config.update_output_enabled:
+                print(f"\n{color_cyan}📊 ДИНАМИЧЕСКОЕ ОБНОВЛЕНИЕ MULTI-TARGET (ход {step_counter}):{color_reset}", flush=True)
+                sorted_stats = sorted(stats.items(), key=lambda item: item[1]["frequency"], reverse=True)
+                for index, (combo, data) in enumerate(sorted_stats[:5], 1):
+                    display_combo = format_combo_pretty_func(combo)
+                    print(f"  {index}. {display_combo:20} выпал {data['freq']:2d} раз ({data['frequency']:5.1f}%)", flush=True)
 
-            selected_pretty = ", ".join(format_outcome_pretty_func(target.outcome, target.specifier) for target in selected_targets)
-            print(f"  ➜ Выбраны: {selected_pretty}", flush=True)
-            print(
-                "  ➜ Цветовой состав: "
-                f"red={selected_color_counts['red']}, yellow={selected_color_counts['yellow']}, double={selected_color_counts['double']}",
-                flush=True,
-            )
-            print("", flush=True)
+                selected_pretty = ", ".join(format_outcome_pretty_func(target.outcome, target.specifier) for target in selected_targets)
+                print(f"  ➜ Выбраны: {selected_pretty}", flush=True)
+                print(
+                    "  ➜ Цветовой состав: "
+                    f"red={selected_color_counts['red']}, yellow={selected_color_counts['yellow']}, double={selected_color_counts['double']}",
+                    flush=True,
+                )
+                print("", flush=True)
         elif dynamic_config.unchanged_analysis_output_enabled:
             print(f"\n{color_cyan}📊 АНАЛИЗ DYNAMIC MULTI-TARGET (ход {step_counter}):{color_reset}", flush=True)
             print(f"  Текущие цели: {', '.join(selected_tokens)}", flush=True)
@@ -506,15 +507,16 @@ def update_dynamic_bet(
         if bet_debug_enabled:
             print(f"[DEBUG DYNAMIC] ✅ СМЕНА: {format_outcome_pretty_func(old_outcome, old_specifier)} → {format_outcome_pretty_func(current_outcome, current_specifier)}", flush=True)
 
-        print(f"\n{color_cyan}📊 ДИНАМИЧЕСКОЕ ОБНОВЛЕНИЕ СТАВКИ (ход {step_counter}):{color_reset}", flush=True)
-        sorted_stats = sorted(stats.items(), key=lambda item: item[1]["frequency"], reverse=True)
-        for index, (combo, data) in enumerate(sorted_stats[:3], 1):
-            display_combo = format_combo_pretty_func(combo)
-            print(f"  {index}. {display_combo:20} выпал {data['freq']:2d} раз ({data['frequency']:5.1f}%)", flush=True)
-        selected_combo = f"{current_outcome}_{current_specifier}" if current_outcome != "double" else "double"
-        display_outcome = format_combo_pretty_func(selected_combo)
-        print(f"  ➜ Выбрана: {display_outcome}", flush=True)
-        print("", flush=True)
+        if dynamic_config.update_output_enabled:
+            print(f"\n{color_cyan}📊 ДИНАМИЧЕСКОЕ ОБНОВЛЕНИЕ СТАВКИ (ход {step_counter}):{color_reset}", flush=True)
+            sorted_stats = sorted(stats.items(), key=lambda item: item[1]["frequency"], reverse=True)
+            for index, (combo, data) in enumerate(sorted_stats[:3], 1):
+                display_combo = format_combo_pretty_func(combo)
+                print(f"  {index}. {display_combo:20} выпал {data['freq']:2d} раз ({data['frequency']:5.1f}%)", flush=True)
+            selected_combo = f"{current_outcome}_{current_specifier}" if current_outcome != "double" else "double"
+            display_outcome = format_combo_pretty_func(selected_combo)
+            print(f"  ➜ Выбрана: {display_outcome}", flush=True)
+            print("", flush=True)
         return current_outcome, current_specifier
 
     if bet_debug_enabled:

@@ -256,17 +256,49 @@ class BettingRuntimeService:
 
         return None
 
-    def update_dynamic_bet(self) -> None:
-        """Пересчитать и при необходимости обновить текущую цель dynamic ставки."""
+    def update_dynamic_bet(self, excluded_tokens: set[str] | None = None) -> tuple[str, str]:
+        """Пересчитать dynamic-цель slot1 и при необходимости уйти от пересечения по top-ranked кандидатам."""
+
+        ctx = self.runtime_context
+        blocked_tokens = excluded_tokens or set()
+        betting_state = ctx.betting_state
+        configured_targets = ctx.get_configured_bet_targets()
+        is_single_target = len(configured_targets) == 1
 
         _dynamic_update_dynamic_bet(
-            runtime_context=self.runtime_context,
+            runtime_context=ctx,
             runtime_config=self.runtime_config,
             analyze_all_results_frequency_func=self.analyze_all_results_frequency,
             get_best_combination_func=self.get_best_combination,
             format_outcome_pretty_func=_format_outcome_pretty,
             format_combo_pretty_func=_format_combo_pretty,
         )
+
+        if blocked_tokens and is_single_target:
+            current_outcome, current_specifier = ctx.get_current_bet_target()
+            current_token = "D" if current_outcome == "double" else f"{'R' if current_outcome == 'red' else 'Y'}{current_specifier}"
+            if current_token in blocked_tokens:
+                stats = self.analyze_all_results_frequency()
+                alternative = self._find_non_intersecting_single_target(
+                    stats=stats,
+                    excluded_tokens=blocked_tokens,
+                )
+                if alternative is not None:
+                    alt_outcome, alt_specifier = alternative
+                    alt_specifier = "" if alt_outcome == "double" else alt_specifier
+                    ctx.set_current_bet_target(alt_outcome, alt_specifier)
+                    betting_state["dynamic_outcome"] = alt_outcome
+                    betting_state["dynamic_specifier"] = alt_specifier
+                    betting_state["dynamic_targets"] = [
+                        "D" if alt_outcome == "double" else f"{'R' if alt_outcome == 'red' else 'Y'}{alt_specifier}"
+                    ]
+                    betting_state["dynamic_color_counts"] = {
+                        "red": 1 if alt_outcome == "red" else 0,
+                        "yellow": 1 if alt_outcome == "yellow" else 0,
+                        "double": 1 if alt_outcome == "double" else 0,
+                    }
+
+        return ctx.get_current_bet_target()
 
     def update_dynamic_bet_2(self, excluded_tokens: set[str] | None = None) -> tuple[str, str]:
         """Пересчитать dynamic-цель для slot2 и по возможности уйти от пересечения с slot1."""

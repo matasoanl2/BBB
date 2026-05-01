@@ -114,6 +114,7 @@ def ensure_runtime_schema(*, database_config: DatabaseConfig) -> None:
         """
     )
     cursor.execute("""CREATE INDEX IF NOT EXISTS idx_bet_timestamp ON bet_history(timestamp)""")
+    cursor.execute("""ALTER TABLE bet_history ADD COLUMN IF NOT EXISTS slot INTEGER DEFAULT 1""")
 
     cursor.execute(
         """

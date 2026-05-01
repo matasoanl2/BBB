@@ -128,6 +128,8 @@ class DynamicBettingConfig:
     enabled: bool
     window_size: int
     recalc_interval: int
+    # Показывать ли блок при реальном изменении dynamic-цели ставки.
+    update_output_enabled: bool
     # Показывать ли вывод анализа, если выбранная цель ставки не изменилась.
     unchanged_analysis_output_enabled: bool
     use_average_value_selection: bool
@@ -345,6 +347,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             enabled_2=_env_bool("DYNAMIC_BET_MODE_2", "false"),
             window_size=int(os.getenv("DYNAMIC_WINDOW_SIZE", "40")),
             recalc_interval=int(os.getenv("DYNAMIC_RECALC_INTERVAL", "5")),
+            update_output_enabled=_env_bool("DYNAMIC_UPDATE_OUTPUT_ENABLED", "true"),
             unchanged_analysis_output_enabled=_env_bool("DYNAMIC_UNCHANGED_ANALYSIS_OUTPUT_ENABLED", "true"),
             use_average_value_selection=_env_bool("DYNAMIC_USE_AVERAGE_VALUE_SELECTION", "true"),
             include_double_selection=_env_bool("DYNAMIC_INCLUDE_DOUBLE_SELECTION", "true"),

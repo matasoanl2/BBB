@@ -359,6 +359,7 @@ async def place_bets(
     total_round_amount = amount * len(normalized_targets)
     next_round_number = int(betting_state.get("total_bet_rounds", 0) or 0) + 1
     next_round_display = str(next_round_number).zfill(3)
+    slot_number = 2 if slot_label == "2" else 1
 
     if not normalized_targets:
         print("[WARNING] Не передано ни одной цели ставки для текущего раунда.", flush=True)
@@ -834,8 +835,8 @@ async def place_bets(
                 for index, target in enumerate(normalized_targets, start=1):
                     cursor.execute(
                         """
-                        INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status, slot)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         RETURNING id
                         """,
                         (
@@ -846,6 +847,7 @@ async def place_bets(
                             betting_config.strategy_name,
                             step_for_history,
                             "pending",
+                            slot_number,
                         ),
                     )
                     history_id_row = cursor.fetchone()
@@ -1003,8 +1005,8 @@ async def place_bets(
                     for target in normalized_targets:
                         cursor.execute(
                             """
-                            INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status)
-                            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status, slot)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 datetime.now(timezone.utc),
@@ -1014,6 +1016,7 @@ async def place_bets(
                                 betting_config.strategy_name,
                                 step_for_history,
                                 "error",
+                                slot_number,
                             ),
                         )
 
@@ -1440,12 +1443,16 @@ async def process_betting_round(
                 except Exception:
                     pass
 
+    slot2_configured_tokens = set(runtime_context.get_configured_target_tokens_2())
     if bet_debug_enabled:
         print(f"[DEBUG PROCESS] DYNAMIC_BET_MODE={dynamic_bet_mode}, calling _update_dynamic_bet", flush=True)
     if dynamic_bet_mode:
         if bet_debug_enabled:
             print("[DEBUG PROCESS] Entering if DYNAMIC_BET_MODE, calling function", flush=True)
-        update_dynamic_bet_func()
+        if place_bets_2_func is not None and not multi_target_mode and slot2_configured_tokens:
+            update_dynamic_bet_func(excluded_tokens=slot2_configured_tokens)
+        else:
+            update_dynamic_bet_func()
     
     bet_targets_to_place: tuple[BetTarget, ...]
     if dynamic_bet_mode:
@@ -1474,39 +1481,30 @@ async def process_betting_round(
         bet_targets_to_place = (BetTarget(outcome=new_outcome, specifier="" if new_outcome == "double" else new_specifier),)
 
     bet_amount = calculate_bet_amount_func()
-    # Анти-пересечение слот 1 → слот 2: если dynamic single-target слота 1 совпадает
-    # с настроенной целью слота 2, сдвигаем цель слота 1 на ближайшее соседнее значение
-    # того же цвета, чтобы оба слота могли поставить разные цели в одном раунде.
     if (
         dynamic_bet_mode
         and not multi_target_mode
         and len(bet_targets_to_place) == 1
         and place_bets_2_func is not None
+        and slot2_configured_tokens
     ):
-        _slot2_tokens_check = {t.token for t in runtime_context.get_configured_bet_targets_2()}
-        _conflict = bet_targets_to_place[0]
-        if _conflict.token in _slot2_tokens_check and _conflict.outcome != "double":
-            try:
-                _val = int(_conflict.specifier)
-            except (TypeError, ValueError):
-                _val = 5
-            _alt: BetTarget | None = None
-            for _delta in range(1, 6):
-                for _cval in (_val - _delta, _val + _delta):
-                    if 1 <= _cval <= 6:
-                        if _format_bet_target_token(_conflict.outcome, str(_cval)) not in _slot2_tokens_check:
-                            _alt = BetTarget(outcome=_conflict.outcome, specifier=str(_cval))
-                            break
-                if _alt:
-                    break
-            if _alt:
-                runtime_context.set_current_bet_target(_alt.outcome, _alt.specifier)
-                bet_targets_to_place = (_alt,)
-                print(
-                    f"[ANTI-OVERLAP][1] Цель слота 1 {_conflict.token} совпадает со слотом 2; "
-                    f"сдвигаем на соседнюю: {_alt.token}",
-                    flush=True,
-                )
+        _resolved_slot1 = bet_targets_to_place[0]
+        if _resolved_slot1.token not in slot2_configured_tokens:
+            pass
+        else:
+            _updated_outcome, _updated_specifier = runtime_context.get_current_bet_target()
+            _updated_target = BetTarget(
+                outcome=_updated_outcome,
+                specifier="" if _updated_outcome == "double" else _updated_specifier,
+            )
+            if _updated_target.token != _resolved_slot1.token:
+                bet_targets_to_place = (_updated_target,)
+                if bet_debug_enabled:
+                    print(
+                        f"[ANTI-OVERLAP][1] Цель слота 1 {_resolved_slot1.token} пересекалась со слотом 2; "
+                        f"берем следующий target из dynamic top: {_updated_target.token}",
+                        flush=True,
+                    )
 
     if bet_debug_enabled:
         print(
