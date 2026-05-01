@@ -628,7 +628,6 @@
                             <div class="bet-card-dice" id="slot1BetDice">-</div>
                             <div class="metric" id="slot1BetAmount">-</div>
                         </div>
-                        <div class="sub">Кубик/кубики цели и эффективная сумма шага</div>
                     </div>
                     <div class="panel metric-card">
                         <div class="label">Slot Margin</div>
@@ -669,7 +668,6 @@
                             <div class="bet-card-dice" id="slot2BetDice">-</div>
                             <div class="metric" id="slot2BetAmount">-</div>
                         </div>
-                        <div class="sub">Кубик/кубики цели и эффективная сумма шага</div>
                     </div>
                     <div class="panel metric-card">
                         <div class="label">Slot Margin</div>
@@ -1346,30 +1344,34 @@
 
         function getCoefficientList(source, context = {}, slotKey = "slot1") {
             const slot2Preferred = slotKey === "slot2";
-            const candidateLists = [
-                source?.coefficients,
-                source?.strategy_coefficients,
-                source?.strategy?.coefficients,
-                source?.strategy_metadata?.coefficients,
-                source?.strategy_config?.coefficients,
-                source?.current_strategy?.coefficients,
-                source?.slot2_coefficients,
-                context.rootSnapshot?.coefficients,
-                context.rootSnapshot?.strategy_coefficients,
-                context.rootSnapshot?.strategy?.coefficients,
-                context.rootSnapshot?.strategy_metadata?.coefficients,
-                context.rootSnapshot?.slot2_coefficients,
-                context.rootSnapshot?.strategy_2_coefficients,
-                context.rootSnapshot?.slot2?.coefficients,
-                context.rootSnapshot?.slot2?.strategy_coefficients,
-            ];
-
-            if (slot2Preferred) {
-                candidateLists.unshift(
+            const candidateLists = slot2Preferred
+                ? [
                     source?.strategy_2_coefficients,
+                    source?.coefficients,
+                    source?.strategy_coefficients,
+                    source?.strategy?.coefficients,
+                    source?.strategy_metadata?.coefficients,
+                    source?.strategy_config?.coefficients,
+                    source?.current_strategy?.coefficients,
+                    source?.slot2_coefficients,
                     context.rootSnapshot?.slot2?.strategy_2_coefficients,
-                );
-            }
+                    context.rootSnapshot?.slot2?.coefficients,
+                    context.rootSnapshot?.slot2?.strategy_coefficients,
+                    context.rootSnapshot?.strategy_2_coefficients,
+                    context.rootSnapshot?.slot2_coefficients,
+                ]
+                : [
+                    source?.coefficients,
+                    source?.strategy_coefficients,
+                    source?.strategy?.coefficients,
+                    source?.strategy_metadata?.coefficients,
+                    source?.strategy_config?.coefficients,
+                    source?.current_strategy?.coefficients,
+                    context.rootSnapshot?.coefficients,
+                    context.rootSnapshot?.strategy_coefficients,
+                    context.rootSnapshot?.strategy?.coefficients,
+                    context.rootSnapshot?.strategy_metadata?.coefficients,
+                ];
 
             for (const candidate of candidateLists) {
                 if (!Array.isArray(candidate) || !candidate.length) {
