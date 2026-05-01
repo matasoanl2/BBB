@@ -171,7 +171,8 @@
             gap: 12px;
         }
 
-        #slot1StrategyName {
+        #slot1StrategyName,
+        #slot2StrategyName {
             font-size: 14px;
             line-height: 1.35;
             letter-spacing: -0.01em;
@@ -211,11 +212,28 @@
         }
 
         .bet-card-dice {
-            min-height: 36px;
-            display: flex;
+            min-height: 30px;
+            display: inline-flex;
             align-items: center;
             gap: 8px;
-            flex-wrap: wrap;
+            flex-wrap: nowrap;
+            min-width: 0;
+        }
+
+        .bet-card-inline {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: nowrap;
+            white-space: nowrap;
+            overflow: hidden;
+        }
+
+        .bet-card-inline .metric {
+            margin: 0;
+            font-size: 24px;
+            line-height: 1;
+            flex: 0 0 auto;
         }
 
         .target-group {
@@ -617,21 +635,38 @@
             <div class="panel" style="padding: 20px 24px;">
                 <div class="section-head" style="margin-bottom: 14px;">
                     <div>
-                        <div class="section-title">Слот 1</div>
-                        <div class="section-note">Текущая ставка и стратегия основного слота</div>
+                        <div class="section-title">Слот 1 — <span id="slot1StrategyName">-</span></div>
+                        <div class="section-note">Ключевые метрики основного слота</div>
                     </div>
                 </div>
                 <div class="slot-cards-grid">
-                    <div class="panel metric-card metric-green">
+                    <div class="panel metric-card">
                         <div class="label">Ставка</div>
-                        <div class="bet-card-dice" id="slot1BetDice">-</div>
-                        <div class="metric" id="slot1BetAmount">-</div>
-                        <div class="sub">Кубик/кубики цели и размер ставки</div>
+                        <div class="bet-card-inline">
+                            <div class="bet-card-dice" id="slot1BetDice">-</div>
+                            <div class="metric" id="slot1BetAmount">-</div>
+                        </div>
+                        <div class="sub">Кубик/кубики цели и эффективная сумма шага</div>
                     </div>
-                    <div class="panel metric-card metric-blue">
-                        <div class="label">Стратегия</div>
-                        <div class="metric" id="slot1StrategyName">-</div>
-                        <div class="sub">Наименование активной стратегии</div>
+                    <div class="panel metric-card">
+                        <div class="label">Session Balance</div>
+                        <div class="metric" id="slot1SessionBalance">-</div>
+                    </div>
+                    <div class="panel metric-card">
+                        <div class="label">Total Profit</div>
+                        <div class="metric" id="slot1TotalProfit">-</div>
+                    </div>
+                    <div class="panel metric-card">
+                        <div class="label">ROI</div>
+                        <div class="metric" id="slot1Roi">-</div>
+                    </div>
+                    <div class="panel metric-card">
+                        <div class="label">Шаг</div>
+                        <div class="metric" id="slot1Step">-</div>
+                    </div>
+                    <div class="panel metric-card">
+                        <div class="label">Ставок в сессии</div>
+                        <div class="metric" id="slot1TotalBets">-</div>
                     </div>
                 </div>
             </div>
@@ -670,10 +705,18 @@
                 <div class="section-head" style="margin-bottom: 14px;">
                     <div>
                         <div class="section-title">Слот 2 — <span id="slot2StrategyName">-</span></div>
-                        <div class="section-note">Независимая стратегия второго слота ставок</div>
+                        <div class="section-note">Ключевые метрики второго слота</div>
                     </div>
                 </div>
-                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px;">
+                <div class="slot-cards-grid">
+                    <div class="panel metric-card">
+                        <div class="label">Ставка</div>
+                        <div class="bet-card-inline">
+                            <div class="bet-card-dice" id="slot2BetDice">-</div>
+                            <div class="metric" id="slot2BetAmount">-</div>
+                        </div>
+                        <div class="sub">Кубик/кубики цели и эффективная сумма шага</div>
+                    </div>
                     <div class="panel metric-card">
                         <div class="label">Session Balance</div>
                         <div class="metric" id="slot2SessionBalance">-</div>
@@ -862,6 +905,24 @@
             if (Number.isNaN(number)) return "-";
             return String(Math.trunc(number));
         };
+
+        const toFiniteNumber = (value) => {
+            if (value === null || value === undefined || value === "") {
+                return null;
+            }
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
+        };
+
+        function firstFiniteNumber(values) {
+            for (const value of values) {
+                const parsed = toFiniteNumber(value);
+                if (parsed !== null) {
+                    return parsed;
+                }
+            }
+            return null;
+        }
 
         const fmtPair = (left, right) => {
             if ((left === null || left === undefined || left === "") && (right === null || right === undefined || right === "")) {
@@ -1374,6 +1435,148 @@
             return [];
         }
 
+        function getCoefficientList(source, context = {}, slotKey = "slot1") {
+            const slot2Preferred = slotKey === "slot2";
+            const candidateLists = [
+                source?.coefficients,
+                source?.strategy_coefficients,
+                source?.strategy?.coefficients,
+                source?.strategy_metadata?.coefficients,
+                source?.strategy_config?.coefficients,
+                source?.current_strategy?.coefficients,
+                source?.slot2_coefficients,
+                context.summary?.coefficients,
+                context.summary?.strategy_coefficients,
+                context.summary?.strategy?.coefficients,
+                context.summary?.slot2_coefficients,
+                context.rootSnapshot?.coefficients,
+                context.rootSnapshot?.strategy_coefficients,
+                context.rootSnapshot?.strategy?.coefficients,
+                context.rootSnapshot?.strategy_metadata?.coefficients,
+                context.rootSnapshot?.slot2_coefficients,
+                context.rootSnapshot?.strategy_2_coefficients,
+                context.rootSnapshot?.slot2?.coefficients,
+                context.rootSnapshot?.slot2?.strategy_coefficients,
+            ];
+
+            if (slot2Preferred) {
+                candidateLists.unshift(
+                    source?.strategy_2_coefficients,
+                    context.rootSnapshot?.slot2?.strategy_2_coefficients,
+                );
+            }
+
+            for (const candidate of candidateLists) {
+                if (!Array.isArray(candidate) || !candidate.length) {
+                    continue;
+                }
+                const normalized = candidate
+                    .map((value) => toFiniteNumber(value))
+                    .filter((value) => value !== null);
+                if (normalized.length) {
+                    return normalized;
+                }
+            }
+
+            return [];
+        }
+
+        function getStepIndex(source) {
+            const rawStep = firstFiniteNumber([
+                source?.current_step,
+                source?.step,
+                source?.strategy_step,
+            ]);
+
+            if (rawStep === null) {
+                return null;
+            }
+            const normalized = Math.trunc(rawStep);
+            return normalized >= 0 ? normalized : 0;
+        }
+
+        function getBaseBet(source, context = {}, slotKey = "slot1") {
+            if (slotKey === "slot2") {
+                return firstFiniteNumber([
+                    source?.base_bet_2,
+                    source?.base_bet,
+                    source?.baseBet,
+                    source?.bet_base,
+                    source?.bet_base_amount,
+                    context.summary?.base_bet_2,
+                    context.summary?.slot2_base_bet,
+                    context.summary?.base_bet,
+                    context.rootSnapshot?.base_bet_2,
+                    context.rootSnapshot?.slot2_base_bet,
+                    context.rootSnapshot?.slot2?.base_bet_2,
+                    context.rootSnapshot?.slot2?.base_bet,
+                ]);
+            }
+
+            return firstFiniteNumber([
+                source?.base_bet,
+                source?.baseBet,
+                source?.bet_base,
+                source?.bet_base_amount,
+                context.summary?.base_bet,
+                context.summary?.baseBet,
+                context.rootSnapshot?.base_bet,
+                context.rootSnapshot?.baseBet,
+                context.rootSnapshot?.bet_base,
+                context.rootSnapshot?.bet_base_amount,
+            ]);
+        }
+
+        function resolveEffectiveBetAmount(source, context = {}, slotKey = "slot1") {
+            const factualAmount = firstFiniteNumber([
+                context.summary?.last_set_amount,
+                source?.last_set_amount,
+                context.summary?.last_bet_amount,
+                source?.last_bet_amount,
+            ]);
+            if (factualAmount !== null) {
+                return factualAmount;
+            }
+
+            const baseBet = getBaseBet(source, context, slotKey);
+            const coefficients = getCoefficientList(source, context, slotKey);
+            if (baseBet === null || !coefficients.length) {
+                return null;
+            }
+
+            const stepIndex = getStepIndex(source);
+            const effectiveIndex = stepIndex === null ? 0 : Math.min(stepIndex, coefficients.length - 1);
+            const coefficient = toFiniteNumber(coefficients[effectiveIndex]);
+            if (coefficient === null) {
+                return null;
+            }
+
+            return baseBet * coefficient;
+        }
+
+        function renderSlotBetCard(slotPrefix, sourceSnapshot, summary, rootSnapshot) {
+            const diceNode = document.getElementById(`${slotPrefix}BetDice`);
+            const amountNode = document.getElementById(`${slotPrefix}BetAmount`);
+            if (!diceNode || !amountNode) {
+                return;
+            }
+
+            const tokens = getTargetTokens(sourceSnapshot);
+            if (!tokens.length) {
+                diceNode.textContent = "-";
+            } else {
+                diceNode.innerHTML = tokens
+                    .map((token) => `<span class="target-group">${renderTargetTokenHtml(token)}</span>`)
+                    .join("");
+            }
+
+            const amount = resolveEffectiveBetAmount(sourceSnapshot, {
+                summary,
+                rootSnapshot,
+            }, slotPrefix === "slot2" ? "slot2" : "slot1");
+            amountNode.textContent = fmtMoney(amount);
+        }
+
         function renderTargetTokenHtml(targetToken) {
             const token = normalizeTargetToken(targetToken);
             if (token === "D") {
@@ -1394,27 +1597,34 @@
             return `<span class="target-double">${escapeHtml(token || "?")}</span>`;
         }
 
-        function renderSlot1BetCard(snapshot, summary) {
-            const diceNode = document.getElementById("slot1BetDice");
-            const amountNode = document.getElementById("slot1BetAmount");
+        function renderSlot1(snapshot, summary) {
             const strategyNode = document.getElementById("slot1StrategyName");
-            if (!diceNode || !amountNode || !strategyNode) {
+            if (!strategyNode) {
                 return;
             }
 
             strategyNode.textContent = snapshot?.strategy_display_name || snapshot?.strategy_name || "-";
+            renderSlotBetCard("slot1", snapshot, summary, snapshot);
 
-            const tokens = getTargetTokens(snapshot);
-            if (!tokens.length) {
-                diceNode.textContent = "-";
-            } else {
-                diceNode.innerHTML = tokens
-                    .map((token) => `<span class="target-group">${renderTargetTokenHtml(token)}</span>`)
-                    .join("");
+            setText("slot1SessionBalance", fmtMoney(snapshot?.session_balance ?? summary?.session_balance));
+
+            const totalProfit = toFiniteNumber(snapshot?.total_profit);
+            const slot1ProfitNode = document.getElementById("slot1TotalProfit");
+            if (slot1ProfitNode) {
+                slot1ProfitNode.textContent = totalProfit !== null ? `${totalProfit >= 0 ? "+" : ""}${Math.round(totalProfit)}р` : "-";
+                slot1ProfitNode.style.color = totalProfit > 0 ? "var(--green, #4caf50)" : totalProfit < 0 ? "var(--red, #f44336)" : "";
             }
 
-            const currentBetAmount = summary?.last_set_amount ?? snapshot?.last_set_amount ?? snapshot?.last_bet_amount;
-            amountNode.textContent = fmtMoney(currentBetAmount);
+            const totalBetAmount = toFiniteNumber(snapshot?.total_bet_amount);
+            const roi = totalProfit !== null && totalBetAmount !== null && totalBetAmount > 0
+                ? (totalProfit / totalBetAmount) * 100
+                : null;
+            setText("slot1Roi", roi !== null ? `${roi.toFixed(2)}%` : "-");
+
+            const step = snapshot?.current_step;
+            const maxSteps = snapshot?.max_steps;
+            setText("slot1Step", (step !== null && step !== undefined && maxSteps) ? `${parseInt(step, 10) + 1}/${parseInt(maxSteps, 10)}` : "-");
+            setText("slot1TotalBets", snapshot?.total_bets_placed !== undefined ? String(snapshot.total_bets_placed) : fmtInteger(summary?.session_total_bets));
         }
 
         function renderLastRoundResultHtml(snapshot, recentRounds = []) {
@@ -1450,6 +1660,7 @@
             const displayName = slot2.strategy_display_name || slot2.strategy_name || "-";
             const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
             setText("slot2StrategyName", displayName);
+            renderSlotBetCard("slot2", slot2, null, snapshot);
             setText("slot2SessionBalance", (slot2.session_balance !== undefined ? (slot2.session_balance >= 0 ? "+" : "") + Math.round(slot2.session_balance) + "р" : "-"));
             const profitEl = document.getElementById("slot2TotalProfit");
             if (profitEl) {
@@ -1477,7 +1688,7 @@
             setText("lossStreak", fmtInteger(summary.consecutive_losses));
             setText("winRate", fmtNumber(summary.win_rate));
             setText("sessionTotalBets", fmtInteger(summary.session_total_bets));
-            renderSlot1BetCard(snapshot, summary);
+            renderSlot1(snapshot, summary);
 
             if (summary.freshness_state === "stale") {
                 renderAlert("Accounting balance устарел или поток данных деградировал", "warn");
