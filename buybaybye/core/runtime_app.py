@@ -157,6 +157,7 @@ class RuntimeApp:
             if page not in initial_pages:
                 self.services.wire_ws_logging(page)
                 self.services.subscribe_jwt_search_to_page(page)
+            self.runtime_context.active_page = page
 
             print("[DEBUG] Поиск JWT токена в ответах...", flush=True)
             _goto_delay = 5
@@ -184,13 +185,35 @@ class RuntimeApp:
                 ),
                 flush=True,
             )
-            await wait_for_exit_signal()
+            if accounting_monitor_task is None:
+                await wait_for_exit_signal()
+            else:
+                exit_signal_task = asyncio.create_task(wait_for_exit_signal())
+                done, pending = await asyncio.wait(
+                    {accounting_monitor_task, exit_signal_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for pending_task in pending:
+                    pending_task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+
+                if accounting_monitor_task in done:
+                    monitor_error = accounting_monitor_task.exception()
+                    if monitor_error is not None:
+                        raise monitor_error
+                    active_page = self.runtime_context.active_page
+                    if active_page is not None and active_page.is_closed():
+                        pass
+                    else:
+                        raise RuntimeError("[ACCOUNTING] monitor_accounting_ws_health завершился неожиданно.")
         finally:
             if accounting_monitor_task is not None:
                 accounting_monitor_task.cancel()
                 try:
                     await accounting_monitor_task
                 except asyncio.CancelledError:
+                    pass
+                except Exception:
                     pass
             await self.runtime_context.cancel_background_tasks()
             await context.close()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import Any
 
 from buybaybye.core.runtime_config import BetTarget
 from buybaybye.core.runtime_state import RuntimeBettingState
@@ -17,6 +18,7 @@ class RuntimeContext:
     current_strategy: dict | None = None
     betting_state: RuntimeBettingState | None = None
     jwt_token: str | None = None
+    active_page: Any | None = None
     page_reload_lock: asyncio.Lock | None = None
     round_processing_lock: asyncio.Lock | None = None
     background_tasks: set[asyncio.Task] = field(default_factory=set)

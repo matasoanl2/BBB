@@ -36,7 +36,9 @@ class RuntimeBettingState:
     accounting_ws_connected: bool = False
     last_accounting_rejection_reason: str | None = None
     last_accounting_recovery_at: str | None = None
+    last_accounting_recovery_attempted_at: str | None = None
     accounting_recovery_attempts: int = 0
+    accounting_consecutive_page_crashes: int = 0
     pending_expected_bet_drop: float = 0.0
     pending_expected_settlement_credit: float = 0.0
     external_deposits_total: float = 0.0

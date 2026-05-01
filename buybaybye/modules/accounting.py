@@ -10,6 +10,30 @@ from buybaybye.core.runtime_context import RuntimeContext
 from buybaybye.core.runtime_config import RuntimeConfig
 
 
+def _is_page_crashed_error(exc: Exception) -> bool:
+    return "page crashed" in str(exc).lower()
+
+
+async def _recover_from_crashed_page(*, page, runtime_context: RuntimeContext) -> tuple[bool, str]:
+    """Попробовать восстановиться после page crash созданием новой страницы в том же context."""
+
+    context = page.context
+    target_url = page.url or "https://betboom.ru/game/nardsgame"
+
+    replacement_page = await context.new_page()
+    await replacement_page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+    runtime_context.active_page = replacement_page
+
+    try:
+        if not page.is_closed():
+            await page.close()
+    except Exception:
+        # Старую упавшую страницу можно игнорировать, если закрыть ее не удалось.
+        pass
+
+    return True, target_url
+
+
 def get_accounting_age_seconds(*, runtime_context: RuntimeContext, reference_key: str) -> float | None:
     """Вернуть возраст timestamp-поля из betting_state в секундах."""
 
@@ -267,7 +291,8 @@ async def reload_page_for_accounting_recovery(
     """Перезагрузить страницу для восстановления accounting websocket и обновления real balance."""
 
     betting_state = runtime_context.betting_state
-    if page.is_closed():
+    active_page = runtime_context.active_page or page
+    if active_page.is_closed():
         return False
 
     print(f"[ACCOUNTING] Баланс устарел, перезагружаем страницу для восстановления канала ({reason})...", flush=True)
@@ -277,9 +302,76 @@ async def reload_page_for_accounting_recovery(
         dedup_key=f"accounting_recovery_start:{reason}",
         enabled=runtime_config.telegram.notify_accounting_issues,
     )
+    betting_state["last_accounting_recovery_attempted_at"] = datetime.now(timezone.utc).isoformat()
+    betting_state["accounting_recovery_attempts"] = int(betting_state.get("accounting_recovery_attempts", 0) or 0) + 1
+
     try:
-        await page.reload(wait_until="domcontentloaded", timeout=30000)
+        await active_page.reload(wait_until="domcontentloaded", timeout=30000)
     except Exception as exc:
+        if _is_page_crashed_error(exc):
+            crash_count = int(betting_state.get("accounting_consecutive_page_crashes", 0) or 0) + 1
+            betting_state["accounting_consecutive_page_crashes"] = crash_count
+            threshold = runtime_config.accounting.page_crash_restart_threshold
+            if crash_count >= threshold:
+                fatal_message = (
+                    "[ACCOUNTING] Достигнут порог подряд идущих page crash при recovery "
+                    f"({crash_count}/{threshold}). Останавливаем процесс для контролируемого рестарта."
+                )
+                print(fatal_message, flush=True)
+                update_runtime_snapshot_func(
+                    "accounting_recovery_fatal",
+                    {
+                        "accounting_recovery_reason": reason,
+                        "consecutive_page_crashes": crash_count,
+                        "page_crash_restart_threshold": threshold,
+                    },
+                )
+                queue_telegram_notification_func(
+                    "[BuyBayBye] Критическая ошибка recovery accounting_ws",
+                    (
+                        "Достигнут порог подряд идущих page crash во время восстановления accounting_ws.\n"
+                        f"Порог: {threshold}\n"
+                        f"Текущий счетчик: {crash_count}\n"
+                        f"Причина: {reason}\n"
+                        "Процесс будет остановлен для внешнего рестарта."
+                    ),
+                    dedup_key="accounting_recovery_page_crash_threshold",
+                    enabled=runtime_config.telegram.notify_accounting_issues,
+                )
+                raise RuntimeError(fatal_message)
+
+            print("[ACCOUNTING] Обнаружен crash страницы во время recovery, пробуем пересоздать страницу...", flush=True)
+            try:
+                recovered, target_url = await _recover_from_crashed_page(page=active_page, runtime_context=runtime_context)
+            except Exception as recover_exc:
+                print(
+                    f"[ACCOUNTING] Не удалось восстановиться после page crash через новую страницу: {recover_exc}",
+                    flush=True,
+                )
+            else:
+                if recovered:
+                    betting_state["last_accounting_recovery_at"] = datetime.now(timezone.utc).isoformat()
+                    update_runtime_snapshot_func(
+                        "accounting_recovery",
+                        {
+                            "accounting_recovery_reason": reason,
+                            "accounting_recovery_attempts": betting_state.get("accounting_recovery_attempts"),
+                            "recovery_mode": "new_page_after_crash",
+                            "recovery_target_url": target_url,
+                        },
+                    )
+                    queue_telegram_notification_func(
+                        "[BuyBayBye] accounting_ws восстановлен",
+                        (
+                            "Страница упала во время reload, выполнено восстановление через новую страницу.\n"
+                            f"Причина: {reason}\n"
+                            f"Текущий real balance: {get_balance_for_log_func()}"
+                        ),
+                        dedup_key=f"accounting_recovery_success_after_crash:{reason}",
+                        enabled=runtime_config.telegram.notify_accounting_issues,
+                    )
+                    return True
+
         print(f"[ACCOUNTING] Ошибка перезагрузки страницы при восстановлении accounting_ws: {exc}", flush=True)
         queue_telegram_notification_func(
             "[BuyBayBye] Ошибка восстановления accounting_ws",
@@ -289,8 +381,8 @@ async def reload_page_for_accounting_recovery(
         )
         return False
 
+    betting_state["accounting_consecutive_page_crashes"] = 0
     betting_state["last_accounting_recovery_at"] = datetime.now(timezone.utc).isoformat()
-    betting_state["accounting_recovery_attempts"] = int(betting_state.get("accounting_recovery_attempts", 0) or 0) + 1
     update_runtime_snapshot_func(
         "accounting_recovery",
         {
@@ -326,10 +418,11 @@ async def monitor_accounting_ws_health(
     while True:
         await asyncio.sleep(runtime_config.accounting.monitor_poll_seconds)
 
-        if page.is_closed():
+        active_page = runtime_context.active_page or page
+        if active_page.is_closed():
             return
 
-        last_recovery_age = get_accounting_age_seconds_func("last_accounting_recovery_at")
+        last_recovery_age = get_accounting_age_seconds_func("last_accounting_recovery_attempted_at")
         if last_recovery_age is not None and last_recovery_age < runtime_config.accounting.recovery_cooldown_seconds:
             continue
 
@@ -364,4 +457,4 @@ async def monitor_accounting_ws_health(
                 reason = f"accounting_ws connected without messages for {ws_open_age:.0f}s"
 
         if reason:
-            await reload_page_for_accounting_recovery_func(page, reason)
+            await reload_page_for_accounting_recovery_func(active_page, reason)

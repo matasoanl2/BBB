@@ -147,6 +147,7 @@ class AccountingConfig:
     recovery_reload_seconds: float
     recovery_cooldown_seconds: float
     idle_reconnect_seconds: float
+    page_crash_restart_threshold: int
     # Poll interval for accounting_ws health monitoring.
     monitor_poll_seconds: float
     debug_rejected_messages: bool
@@ -232,6 +233,8 @@ def validate_runtime_config(config: RuntimeConfig) -> None:
         raise ValueError("[ERROR] ACCOUNTING_RECOVERY_COOLDOWN_SECONDS не может быть отрицательным.")
     if config.accounting.idle_reconnect_seconds <= 0:
         raise ValueError("[ERROR] ACCOUNTING_IDLE_RECONNECT_SECONDS должен быть больше 0.")
+    if config.accounting.page_crash_restart_threshold <= 0:
+        raise ValueError("[ERROR] ACCOUNTING_PAGE_CRASH_RESTART_THRESHOLD должен быть больше 0.")
     if config.accounting.monitor_poll_seconds <= 0:
         raise ValueError("[ERROR] ACCOUNTING_MONITOR_POLL_SECONDS должен быть больше 0.")
     if config.telegram.request_timeout_seconds <= 0:
@@ -356,6 +359,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             recovery_reload_seconds=float(os.getenv("ACCOUNTING_RECOVERY_RELOAD_SECONDS", "25")),
             recovery_cooldown_seconds=float(os.getenv("ACCOUNTING_RECOVERY_COOLDOWN_SECONDS", "30")),
             idle_reconnect_seconds=float(os.getenv("ACCOUNTING_IDLE_RECONNECT_SECONDS", "300")),
+            page_crash_restart_threshold=max(1, int(os.getenv("ACCOUNTING_PAGE_CRASH_RESTART_THRESHOLD", "3"))),
             monitor_poll_seconds=float(os.getenv("ACCOUNTING_MONITOR_POLL_SECONDS", "3")),
             debug_rejected_messages=_env_bool("ACCOUNTING_DEBUG_REJECTED_MESSAGES"),
         ),
