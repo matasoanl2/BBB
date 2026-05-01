@@ -221,6 +221,23 @@ class RuntimeServices:
 
         ctx.betting_state = ctx.betting_state_2
         ctx.current_strategy = ctx.current_strategy_2
+
+        def _update_runtime_snapshot_slot1_context(
+            event_type: str = "heartbeat",
+            extra: dict | None = None,
+        ) -> None:
+            """Обновить top-level snapshot под slot1-контекстом во время работы slot2."""
+
+            slot2_state = ctx.betting_state
+            slot2_strategy = ctx.current_strategy
+            ctx.betting_state = orig_state
+            ctx.current_strategy = orig_strategy
+            try:
+                self.update_runtime_snapshot(event_type=event_type, extra=extra)
+            finally:
+                ctx.betting_state = slot2_state
+                ctx.current_strategy = slot2_strategy
+
         result = False
         try:
             result = await _betting_place_bets(
@@ -240,7 +257,7 @@ class RuntimeServices:
                 is_forbidden_access_error_func=self.is_forbidden_access_error,
                 reload_page_and_refresh_token_func=self.reload_page_and_refresh_token,
                 advance_step_after_set_error_func=self.advance_step_2_after_set_error,
-                update_runtime_snapshot_func=self.update_runtime_snapshot,
+                update_runtime_snapshot_func=_update_runtime_snapshot_slot1_context,
                 queue_telegram_notification_func=self.queue_telegram_notification,
             )
         finally:
