@@ -76,9 +76,22 @@ class RuntimeContext:
     def get_configured_target_tokens(self) -> tuple[str, ...]:
         return tuple(target.token for target in self.configured_bet_targets)
 
+    def get_current_bet_target_2(self) -> tuple[str, str]:
+        return self.bet_mode_outcome_2, self.bet_mode_specifier_2
+
+    def get_configured_bet_targets_2(self) -> tuple[BetTarget, ...]:
+        return self.configured_bet_targets_2
+
+    def get_configured_target_tokens_2(self) -> tuple[str, ...]:
+        return tuple(target.token for target in self.configured_bet_targets_2)
+
     def set_current_bet_target(self, outcome: str, specifier: str) -> None:
         self.bet_mode_outcome = outcome
         self.bet_mode_specifier = specifier
+
+    def set_current_bet_target_2(self, outcome: str, specifier: str) -> None:
+        self.bet_mode_outcome_2 = outcome
+        self.bet_mode_specifier_2 = specifier
 
     def get_max_strategy_steps(self, default: int = 15) -> int:
         if not self.current_strategy:

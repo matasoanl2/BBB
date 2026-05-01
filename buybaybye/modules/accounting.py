@@ -183,6 +183,13 @@ def update_balance_from_accounting_payload(
     previous_balance = betting_state.get("account_balance")
     pending_expected_bet_drop = float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0)
     pending_expected_settlement_credit = float(betting_state.get("pending_expected_settlement_credit", 0.0) or 0.0)
+
+    # Учитываем pending-значения второго слота (они хранятся в отдельном betting_state_2,
+    # но деньги на одном счёте, поэтому сверяем суммарные ожидаемые движения).
+    betting_state_2_ref = getattr(runtime_context, "betting_state_2", None)
+    slot2_pending_bet_drop = float((betting_state_2_ref or {}).get("pending_expected_bet_drop", 0.0) or 0.0)
+    slot2_pending_settlement = float((betting_state_2_ref or {}).get("pending_expected_settlement_credit", 0.0) or 0.0)
+
     withdrawal_detected = False
     withdrawal_amount = 0.0
     deposit_detected = False
@@ -190,16 +197,22 @@ def update_balance_from_accounting_payload(
 
     if isinstance(previous_balance, (int, float)) and new_balance < previous_balance:
         actual_drop = float(previous_balance) - new_balance
-        covered_by_bet = min(actual_drop, pending_expected_bet_drop)
-        pending_expected_bet_drop = max(0.0, pending_expected_bet_drop - covered_by_bet)
+        total_pending_bet_drop = pending_expected_bet_drop + slot2_pending_bet_drop
+        covered_by_bet = min(actual_drop, total_pending_bet_drop)
+        # Уменьшаем сначала слот 1, потом слот 2
+        slot1_bet_used = min(covered_by_bet, pending_expected_bet_drop)
+        slot2_bet_used = covered_by_bet - slot1_bet_used
+        pending_expected_bet_drop = max(0.0, pending_expected_bet_drop - slot1_bet_used)
+        if betting_state_2_ref is not None:
+            betting_state_2_ref["pending_expected_bet_drop"] = max(0.0, slot2_pending_bet_drop - slot2_bet_used)
+            slot2_pending_bet_drop = max(0.0, slot2_pending_bet_drop - slot2_bet_used)
         withdrawal_amount = actual_drop - covered_by_bet
 
         if withdrawal_amount > 0.009:
             withdrawal_detected = True
-            betting_state["session_balance"] -= withdrawal_amount
             betting_state["external_withdrawals_total"] = betting_state.get("external_withdrawals_total", 0.0) + withdrawal_amount
             print(
-                f"[ACCOUNTING] Обнаружен вывод: -{withdrawal_amount:.0f}р, session_balance скорректирован до {betting_state['session_balance']:.0f}р",
+                f"[ACCOUNTING] Обнаружен вывод: -{withdrawal_amount:.0f}р",
                 flush=True,
             )
             queue_telegram_notification_func(
@@ -207,28 +220,39 @@ def update_balance_from_accounting_payload(
                 (
                     "Accounting balance уменьшился вне ожидаемого списания ставки.\n"
                     f"Сумма вывода: {withdrawal_amount:.0f}р\n"
-                    f"Новый real balance: {new_balance:.0f}р\n"
-                    f"Session balance: {betting_state['session_balance']:.0f}р"
+                    f"Новый real balance: {new_balance:.0f}р"
                 ),
                 dedup_key="withdrawal_detected",
                 enabled=runtime_config.telegram.notify_withdrawals,
             )
     elif isinstance(previous_balance, (int, float)) and new_balance > previous_balance:
         actual_rise = new_balance - float(previous_balance)
-        covered_by_settlement = min(actual_rise, pending_expected_settlement_credit)
-        pending_expected_settlement_credit = max(0.0, pending_expected_settlement_credit - covered_by_settlement)
+        total_pending_settlement = pending_expected_settlement_credit + slot2_pending_settlement
+        covered_by_settlement = min(actual_rise, total_pending_settlement)
+        # Уменьшаем сначала слот 1, потом слот 2
+        slot1_credit_used = min(covered_by_settlement, pending_expected_settlement_credit)
+        slot2_credit_used = covered_by_settlement - slot1_credit_used
+        pending_expected_settlement_credit = max(0.0, pending_expected_settlement_credit - slot1_credit_used)
+        if betting_state_2_ref is not None:
+            betting_state_2_ref["pending_expected_settlement_credit"] = max(0.0, slot2_pending_settlement - slot2_credit_used)
+            slot2_pending_settlement = max(0.0, slot2_pending_settlement - slot2_credit_used)
         remaining_rise = actual_rise - covered_by_settlement
         if covered_by_settlement > 0.009 and remaining_rise > 0.0:
-            covered_by_pending_drop = min(remaining_rise, pending_expected_bet_drop)
-            pending_expected_bet_drop = max(0.0, pending_expected_bet_drop - covered_by_pending_drop)
+            total_remaining_bet_drop = pending_expected_bet_drop + slot2_pending_bet_drop
+            covered_by_pending_drop = min(remaining_rise, total_remaining_bet_drop)
+            slot1_drop_used2 = min(covered_by_pending_drop, pending_expected_bet_drop)
+            slot2_drop_used2 = covered_by_pending_drop - slot1_drop_used2
+            pending_expected_bet_drop = max(0.0, pending_expected_bet_drop - slot1_drop_used2)
+            if betting_state_2_ref is not None:
+                betting_state_2_ref["pending_expected_bet_drop"] = max(0.0, slot2_pending_bet_drop - slot2_drop_used2)
+                slot2_pending_bet_drop = max(0.0, slot2_pending_bet_drop - slot2_drop_used2)
             remaining_rise -= covered_by_pending_drop
         if remaining_rise > 0.009:
             deposit_detected = True
             deposit_amount = remaining_rise
-            betting_state["session_balance"] += deposit_amount
             betting_state["external_deposits_total"] = betting_state.get("external_deposits_total", 0.0) + deposit_amount
             print(
-                f"[ACCOUNTING] Обнаружено пополнение: +{deposit_amount:.0f}р, session_balance скорректирован до {betting_state['session_balance']:.0f}р",
+                f"[ACCOUNTING] Обнаружено пополнение: +{deposit_amount:.0f}р",
                 flush=True,
             )
             queue_telegram_notification_func(
@@ -236,8 +260,7 @@ def update_balance_from_accounting_payload(
                 (
                     "Accounting balance вырос вне ожидаемого расчета ставки.\n"
                     f"Сумма пополнения: {deposit_amount:.0f}р\n"
-                    f"Новый real balance: {new_balance:.0f}р\n"
-                    f"Session balance: {betting_state['session_balance']:.0f}р"
+                    f"Новый real balance: {new_balance:.0f}р"
                 ),
                 dedup_key="deposit_detected",
                 enabled=runtime_config.telegram.notify_deposits,

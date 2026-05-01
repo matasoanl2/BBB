@@ -136,6 +136,7 @@ class DynamicBettingConfig:
     filter_by_side: bool
     random_fallback_enabled: bool
     random_fallback_loss_streak: int
+    enabled_2: bool = False
     multi_target_enabled: bool = False
     preserve_color_ratio: bool = False
 
@@ -341,6 +342,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
         ),
         dynamic_betting=DynamicBettingConfig(
             enabled=_env_bool("DYNAMIC_BET_MODE"),
+            enabled_2=_env_bool("DYNAMIC_BET_MODE_2", "false"),
             window_size=int(os.getenv("DYNAMIC_WINDOW_SIZE", "40")),
             recalc_interval=int(os.getenv("DYNAMIC_RECALC_INTERVAL", "5")),
             unchanged_analysis_output_enabled=_env_bool("DYNAMIC_UNCHANGED_ANALYSIS_OUTPUT_ENABLED", "true"),

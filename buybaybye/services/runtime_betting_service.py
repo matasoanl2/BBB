@@ -200,6 +200,62 @@ class BettingRuntimeService:
             analyze_all_results_frequency_func=self.analyze_all_results_frequency,
         )
 
+    def _run_with_slot2_context(self, callback):
+        """Временно переключить runtime_context на slot2 и вернуть результат callback."""
+
+        ctx = self.runtime_context
+        if ctx.betting_state_2 is None or ctx.current_strategy_2 is None:
+            return callback()
+
+        orig_state = ctx.betting_state
+        orig_strategy = ctx.current_strategy
+        orig_targets = ctx.configured_bet_targets
+        orig_outcome = ctx.bet_mode_outcome
+        orig_specifier = ctx.bet_mode_specifier
+
+        ctx.betting_state = ctx.betting_state_2
+        ctx.current_strategy = ctx.current_strategy_2
+        ctx.configured_bet_targets = ctx.configured_bet_targets_2
+        ctx.bet_mode_outcome = ctx.bet_mode_outcome_2
+        ctx.bet_mode_specifier = ctx.bet_mode_specifier_2
+
+        try:
+            result = callback()
+            ctx.bet_mode_outcome_2 = ctx.bet_mode_outcome
+            ctx.bet_mode_specifier_2 = ctx.bet_mode_specifier
+            return result
+        finally:
+            ctx.betting_state = orig_state
+            ctx.current_strategy = orig_strategy
+            ctx.configured_bet_targets = orig_targets
+            ctx.bet_mode_outcome = orig_outcome
+            ctx.bet_mode_specifier = orig_specifier
+
+    def _find_non_intersecting_single_target(
+        self,
+        *,
+        stats: dict,
+        excluded_tokens: set[str],
+    ) -> tuple[str, str] | None:
+        """Найти лучшую single-target цель, не попадающую в excluded_tokens."""
+
+        if not stats:
+            return None
+
+        remaining_stats = dict(stats)
+        while remaining_stats:
+            outcome, specifier = self.get_best_combination(remaining_stats)
+            token = "D" if outcome == "double" else f"{'R' if outcome == 'red' else 'Y'}{specifier}"
+            if token not in excluded_tokens:
+                return outcome, specifier
+
+            combo_key = "double" if outcome == "double" else f"{outcome}_{specifier}"
+            if combo_key not in remaining_stats:
+                break
+            remaining_stats.pop(combo_key, None)
+
+        return None
+
     def update_dynamic_bet(self) -> None:
         """Пересчитать и при необходимости обновить текущую цель dynamic ставки."""
 
@@ -211,6 +267,65 @@ class BettingRuntimeService:
             format_outcome_pretty_func=_format_outcome_pretty,
             format_combo_pretty_func=_format_combo_pretty,
         )
+
+    def update_dynamic_bet_2(self, excluded_tokens: set[str] | None = None) -> tuple[str, str]:
+        """Пересчитать dynamic-цель для slot2 и по возможности уйти от пересечения с slot1."""
+
+        ctx = self.runtime_context
+        if ctx.betting_state_2 is None or ctx.current_strategy_2 is None:
+            return ctx.get_current_bet_target_2()
+
+        if not self.runtime_config.dynamic_betting.enabled_2:
+            return ctx.get_current_bet_target_2()
+
+        blocked_tokens = excluded_tokens or set()
+
+        def _update_slot2() -> tuple[str, str]:
+            betting_state = ctx.betting_state
+            configured_targets = ctx.get_configured_bet_targets()
+            is_single_target = len(configured_targets) == 1
+
+            original_dynamic_enabled = self.runtime_config.dynamic_betting.enabled
+            self.runtime_config.dynamic_betting.enabled = True
+            try:
+                _dynamic_update_dynamic_bet(
+                    runtime_context=ctx,
+                    runtime_config=self.runtime_config,
+                    analyze_all_results_frequency_func=self.analyze_all_results_frequency,
+                    get_best_combination_func=self.get_best_combination,
+                    format_outcome_pretty_func=_format_outcome_pretty,
+                    format_combo_pretty_func=_format_combo_pretty,
+                )
+            finally:
+                self.runtime_config.dynamic_betting.enabled = original_dynamic_enabled
+
+            if blocked_tokens and is_single_target:
+                current_outcome, current_specifier = ctx.get_current_bet_target()
+                current_token = "D" if current_outcome == "double" else f"{'R' if current_outcome == 'red' else 'Y'}{current_specifier}"
+                if current_token in blocked_tokens:
+                    stats = self.analyze_all_results_frequency()
+                    alternative = self._find_non_intersecting_single_target(
+                        stats=stats,
+                        excluded_tokens=blocked_tokens,
+                    )
+                    if alternative is not None:
+                        alt_outcome, alt_specifier = alternative
+                        alt_specifier = "" if alt_outcome == "double" else alt_specifier
+                        ctx.set_current_bet_target(alt_outcome, alt_specifier)
+                        betting_state["dynamic_outcome"] = alt_outcome
+                        betting_state["dynamic_specifier"] = alt_specifier
+                        betting_state["dynamic_targets"] = [
+                            "D" if alt_outcome == "double" else f"{'R' if alt_outcome == 'red' else 'Y'}{alt_specifier}"
+                        ]
+                        betting_state["dynamic_color_counts"] = {
+                            "red": 1 if alt_outcome == "red" else 0,
+                            "yellow": 1 if alt_outcome == "yellow" else 0,
+                            "double": 1 if alt_outcome == "double" else 0,
+                        }
+
+            return ctx.get_current_bet_target()
+
+        return self._run_with_slot2_context(_update_slot2)
 
     def generate_random_bet(self) -> tuple[str, str]:
         """Сгенерировать fallback-ставку для сброса после длинной серии проигрышей."""

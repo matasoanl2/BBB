@@ -182,6 +182,23 @@ def _format_bet_targets_pretty(bet_targets: tuple[BetTarget, ...], format_outcom
     return ", ".join(format_outcome_pretty_func(target.outcome, target.specifier) for target in bet_targets)
 
 
+def _resolve_target_tokens(tokens: list[str] | tuple[str, ...]) -> tuple[BetTarget, ...]:
+    resolved_targets: list[BetTarget] = []
+    for token in tokens:
+        token_text = str(token).strip().upper()
+        if token_text == "D":
+            resolved_targets.append(BetTarget(outcome="double", specifier=""))
+            continue
+        if len(token_text) == 2 and token_text[0] in {"R", "Y"} and token_text[1] in {"1", "2", "3", "4", "5", "6"}:
+            resolved_targets.append(
+                BetTarget(
+                    outcome="red" if token_text[0] == "R" else "yellow",
+                    specifier=token_text[1],
+                )
+            )
+    return tuple(resolved_targets)
+
+
 def _normalize_account_balance(raw_balance) -> float | None:
     try:
         if raw_balance is None:
@@ -199,6 +216,7 @@ def _clear_low_balance_pause_state(betting_state: dict) -> None:
     betting_state["low_balance_pause_targets"] = []
     betting_state["target_balance_pause_last_check_at"] = None
     betting_state["target_balance_pause_last_observed_balance"] = None
+    betting_state["low_balance_api_fail_at"] = None
 
 
 def _set_low_balance_pause_state(
@@ -313,6 +331,7 @@ async def place_bets(
     amount: float,
     *,
     allow_refresh_retry: bool = True,
+    slot_label: str = "",
     runtime_context: RuntimeContext,
     runtime_config: RuntimeConfig,
     get_jwt_token_func,
@@ -335,7 +354,8 @@ async def place_bets(
     telegram_config = runtime_config.telegram
     normalized_targets = tuple(bet_targets)
     requested_targets = normalized_targets
-    targets_display = _format_bet_targets_pretty(normalized_targets, format_outcome_pretty_func)
+    _slot_prefix = f"[{slot_label or '1'}]"
+    targets_display = _slot_prefix + _format_bet_targets_pretty(normalized_targets, format_outcome_pretty_func)
     total_round_amount = amount * len(normalized_targets)
     next_round_number = int(betting_state.get("total_bet_rounds", 0) or 0) + 1
     next_round_display = str(next_round_number).zfill(3)
@@ -350,8 +370,9 @@ async def place_bets(
         return False
 
     if betting_config.debug_enabled:
+        slot_suffix = f" [слот {slot_label}]" if slot_label else ""
         print(
-            f"[DEBUG PLACE_BETS] targets={[target.token for target in normalized_targets]}, amount_per_target={amount}, total={total_round_amount}",
+            f"[DEBUG PLACE_BETS{slot_suffix}] targets={[target.token for target in normalized_targets]}, amount_per_target={amount}, total={total_round_amount}",
             flush=True,
         )
 
@@ -658,9 +679,34 @@ async def place_bets(
                 return False
 
             if was_low_balance_paused:
+                _api_fail_pause_reason = str(betting_state.get("low_balance_pause_reason") or "")
+                if _api_fail_pause_reason == "api_insufficient_balance":
+                    _api_fail_at_raw = betting_state.get("low_balance_api_fail_at")
+                    if _api_fail_at_raw:
+                        try:
+                            _api_fail_at = datetime.fromisoformat(_api_fail_at_raw)
+                            _elapsed = (datetime.now(timezone.utc) - _api_fail_at).total_seconds()
+                            if _elapsed < 10:
+                                return False
+                        except ValueError:
+                            pass
                 _clear_low_balance_pause_state(betting_state)
                 betting_state["current_step"] = 0
                 betting_state["consecutive_losses"] = 0
+                # После возобновления из паузы стартуем с базовой ставки,
+                # а не с уже рассчитанной суммы предыдущего шага прогрессии.
+                resumed_base_amount = (
+                    float(getattr(betting_config, "base_bet_2", 0.0) or 0.0)
+                    if slot_label == "2"
+                    else float(getattr(betting_config, "base_bet", 0.0) or 0.0)
+                )
+                if resumed_base_amount > 0 and amount != resumed_base_amount:
+                    amount = resumed_base_amount
+                    affordable_targets = _get_affordable_bet_targets(
+                        bet_targets=normalized_targets,
+                        amount=amount,
+                        available_balance=available_balance,
+                    )
                 _print_bet_system_log(
                     runtime_config=runtime_config,
                     event="set_resume_low_balance",
@@ -687,7 +733,7 @@ async def place_bets(
                     flush=True,
                 )
             normalized_targets = affordable_targets
-            targets_display = _format_bet_targets_pretty(normalized_targets, format_outcome_pretty_func)
+            targets_display = _slot_prefix + _format_bet_targets_pretty(normalized_targets, format_outcome_pretty_func)
             total_round_amount = amount * len(normalized_targets)
 
     except Exception as exc:
@@ -869,6 +915,7 @@ async def place_bets(
                             normalized_targets,
                             amount,
                             allow_refresh_retry=False,
+                            slot_label=slot_label,
                             runtime_context=runtime_context,
                             runtime_config=runtime_config,
                             get_jwt_token_func=get_jwt_token_func,
@@ -893,6 +940,7 @@ async def place_bets(
                     )
 
                 if is_insufficient_balance:
+                    betting_state["low_balance_api_fail_at"] = datetime.now(timezone.utc).isoformat()
                     pause_changed = _set_low_balance_pause_state(
                         betting_state,
                         amount=amount,
@@ -1131,6 +1179,7 @@ async def process_betting_round(
     print_session_stats_func,
     print_dice_stats_20_func,
     update_dynamic_bet_func,
+    update_dynamic_bet_2_func=None,
     generate_random_bet_func,
     calculate_bet_amount_func,
     place_bet_func,
@@ -1266,7 +1315,7 @@ async def process_betting_round(
                 resolved_round_number = int(pending_bets[0].get("round_number", 0) or 0)
             if resolved_round_number <= 0:
                 resolved_round_number = int(betting_state.get("last_bet_round_number", 0) or 0)
-            round_targets_display = ", ".join(round_target_labels)
+            round_targets_display = "[1]" + ", ".join(round_target_labels)
             log_line = format_bet_log_func(
                 action="RES",
                 status_icon="✅" if round_margin > 0 else "❌",
@@ -1364,13 +1413,13 @@ async def process_betting_round(
                     betting_state_2["current_step"] = current_step_2 + 1
                     betting_state_2["consecutive_losses"] = betting_state_2.get("consecutive_losses", 0) + 1
 
-                round_targets_display_2 = ", ".join(round_target_labels_2)
+                round_targets_display_2 = "[2]" + ", ".join(round_target_labels_2)
                 resolved_round_number_2 = int(pending_bets_2[0].get("round_number", 0) or 0) if pending_bets_2 else 0
                 log_suffix_2 = " [♻️ RESTART]" if restarted_2 else ""
                 log_line_2 = format_bet_log_func(
                     action="RES",
                     status_icon="✅" if round_margin_2 > 0 else "❌",
-                    outcome=f"[2]{round_targets_display_2}",
+                    outcome=round_targets_display_2,
                     amount=f"{betting_state_2.get('last_bet_amount', 0):.0f}р",
                     step=(f"{current_step_2+1}/{max_steps_2}" if round_margin_2 > 0 or not restarted_2 else f"{max_steps_2}/{max_steps_2}"),
                     result=actual_dice_representation,
@@ -1402,20 +1451,7 @@ async def process_betting_round(
     if dynamic_bet_mode:
         if multi_target_mode:
             dynamic_target_tokens = list(betting_state.get("dynamic_targets") or [])
-            resolved_dynamic_targets: list[BetTarget] = []
-            for token in dynamic_target_tokens:
-                token_text = str(token).strip().upper()
-                if token_text == "D":
-                    resolved_dynamic_targets.append(BetTarget(outcome="double", specifier=""))
-                    continue
-                if len(token_text) == 2 and token_text[0] in {"R", "Y"} and token_text[1] in {"1", "2", "3", "4", "5", "6"}:
-                    resolved_dynamic_targets.append(
-                        BetTarget(
-                            outcome="red" if token_text[0] == "R" else "yellow",
-                            specifier=token_text[1],
-                        )
-                    )
-
+            resolved_dynamic_targets = list(_resolve_target_tokens(dynamic_target_tokens))
             if resolved_dynamic_targets:
                 bet_targets_to_place = tuple(resolved_dynamic_targets)
             else:
@@ -1438,16 +1474,75 @@ async def process_betting_round(
         bet_targets_to_place = (BetTarget(outcome=new_outcome, specifier="" if new_outcome == "double" else new_specifier),)
 
     bet_amount = calculate_bet_amount_func()
+    # Анти-пересечение слот 1 → слот 2: если dynamic single-target слота 1 совпадает
+    # с настроенной целью слота 2, сдвигаем цель слота 1 на ближайшее соседнее значение
+    # того же цвета, чтобы оба слота могли поставить разные цели в одном раунде.
+    if (
+        dynamic_bet_mode
+        and not multi_target_mode
+        and len(bet_targets_to_place) == 1
+        and place_bets_2_func is not None
+    ):
+        _slot2_tokens_check = {t.token for t in runtime_context.get_configured_bet_targets_2()}
+        _conflict = bet_targets_to_place[0]
+        if _conflict.token in _slot2_tokens_check and _conflict.outcome != "double":
+            try:
+                _val = int(_conflict.specifier)
+            except (TypeError, ValueError):
+                _val = 5
+            _alt: BetTarget | None = None
+            for _delta in range(1, 6):
+                for _cval in (_val - _delta, _val + _delta):
+                    if 1 <= _cval <= 6:
+                        if _format_bet_target_token(_conflict.outcome, str(_cval)) not in _slot2_tokens_check:
+                            _alt = BetTarget(outcome=_conflict.outcome, specifier=str(_cval))
+                            break
+                if _alt:
+                    break
+            if _alt:
+                runtime_context.set_current_bet_target(_alt.outcome, _alt.specifier)
+                bet_targets_to_place = (_alt,)
+                print(
+                    f"[ANTI-OVERLAP][1] Цель слота 1 {_conflict.token} совпадает со слотом 2; "
+                    f"сдвигаем на соседнюю: {_alt.token}",
+                    flush=True,
+                )
+
     if bet_debug_enabled:
         print(
             f"[DEBUG PROCESS_BET] Вызов place_bets для {[target.token for target in bet_targets_to_place]} по {bet_amount:.0f}р на цель",
             flush=True,
         )
     await place_bets_func(page, bet_targets_to_place, bet_amount)
-
     # Второй слот: размещение ставок
     if place_bets_2_func is not None and calculate_bet_amount_2_func is not None:
-        slot2_targets = runtime_context.configured_bet_targets_2
+        slot1_target_tokens = {target.token for target in bet_targets_to_place}
+        slot2_targets = runtime_context.get_configured_bet_targets_2()
+        slot2_dynamic_mode = runtime_config.dynamic_betting.enabled_2
+
+        if slot2_dynamic_mode:
+            multi_target_mode_2 = len(slot2_targets) > 1
+            dynamic_multi_effective_2 = multi_target_mode_2 and runtime_config.dynamic_betting.multi_target_enabled
+
+            if dynamic_multi_effective_2:
+                if update_dynamic_bet_2_func is not None:
+                    update_dynamic_bet_2_func()
+                slot2_dynamic_tokens = list((runtime_context.betting_state_2 or {}).get("dynamic_targets") or [])
+                resolved_dynamic_targets_2 = _resolve_target_tokens(slot2_dynamic_tokens)
+                if resolved_dynamic_targets_2:
+                    slot2_targets = resolved_dynamic_targets_2
+            else:
+                if update_dynamic_bet_2_func is not None:
+                    update_dynamic_bet_2_func(excluded_tokens=slot1_target_tokens)
+                slot2_outcome, slot2_specifier = runtime_context.get_current_bet_target_2()
+                slot2_targets = (
+                    BetTarget(
+                        outcome=slot2_outcome,
+                        specifier="" if slot2_outcome == "double" else slot2_specifier,
+                    ),
+                )
+
+        slot2_targets = tuple(target for target in slot2_targets if target.token not in slot1_target_tokens)
         if slot2_targets:
             slot2_amount = calculate_bet_amount_2_func()
             if bet_debug_enabled:
@@ -1456,3 +1551,8 @@ async def process_betting_round(
                     flush=True,
                 )
             await place_bets_2_func(page, slot2_targets, slot2_amount)
+        else:
+            print(
+                "[WARNING][2] Все цели второго слота пересекаются с целями слота 1 в текущем раунде; слот 2 пропущен.",
+                flush=True,
+            )
