@@ -456,7 +456,12 @@ async def monitor_accounting_ws_health(
         reason = None
         if betting_state.get("accounting_ws_connected") is False and betting_state.get("last_accounting_ws_closed_at"):
             reason = "accounting_ws closed"
-        elif is_account_balance_stale_func() and balance_age is not None and balance_age >= runtime_config.accounting.recovery_reload_seconds:
+        elif (
+            runtime_config.accounting.recovery_reload_on_stale_balance
+            and is_account_balance_stale_func()
+            and balance_age is not None
+            and balance_age >= runtime_config.accounting.recovery_reload_seconds
+        ):
             reason = f"balance_update stale for {balance_age:.0f}s"
         elif (
             betting_state.get("account_balance") is not None

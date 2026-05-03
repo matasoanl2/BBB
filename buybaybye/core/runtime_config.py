@@ -146,6 +146,7 @@ class DynamicBettingConfig:
 @dataclass(slots=True)
 class AccountingConfig:
     balance_stale_seconds: float
+    recovery_reload_on_stale_balance: bool
     initial_balance_timeout_seconds: float
     recovery_reload_seconds: float
     recovery_cooldown_seconds: float
@@ -360,6 +361,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
         ),
         accounting=AccountingConfig(
             balance_stale_seconds=float(os.getenv("ACCOUNTING_BALANCE_STALE_SECONDS", "15")),
+            recovery_reload_on_stale_balance=_env_bool("ACCOUNTING_RECOVERY_RELOAD_ON_STALE_BALANCE", "true"),
             initial_balance_timeout_seconds=float(os.getenv("ACCOUNTING_INITIAL_BALANCE_TIMEOUT_SECONDS", "20")),
             recovery_reload_seconds=float(os.getenv("ACCOUNTING_RECOVERY_RELOAD_SECONDS", "25")),
             recovery_cooldown_seconds=float(os.getenv("ACCOUNTING_RECOVERY_COOLDOWN_SECONDS", "30")),
