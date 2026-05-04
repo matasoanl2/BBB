@@ -2524,10 +2524,8 @@ async def process_betting_round(
 
             balance_for_log = betting_state["session_balance"]
             bet_result_status = "loss"
-            log_suffix = ""
             if round_margin > 0:
                 bet_result_status = WIN_PENDING_CONFIRMATION_STATUS
-                log_suffix = " [⏳ WAIT ACCOUNTING]"
             else:
                 betting_state["total_profit"] += round_margin
                 betting_state["session_balance"] += round_margin
@@ -2554,10 +2552,7 @@ async def process_betting_round(
                 real_balance=get_balance_for_log_func(),
                 bets_count=str(resolved_round_number or total_bets).zfill(3),
             )
-            if restarted:
-                print(log_line + " [♻️ RESTART]", flush=True)
-            else:
-                print(log_line + log_suffix, flush=True)
+            print(log_line, flush=True)
 
             if total_bets > 0 and total_bets % 50 == 0:
                 print_session_stats_func(total_bets)
@@ -2656,18 +2651,13 @@ async def process_betting_round(
                     betting_state_2["last_set_status"] = "loss"
 
                 balance_for_log_2 = betting_state_2.get("session_balance", 0)
-                log_suffix_2 = ""
                 if round_margin_2 <= 0:
                     betting_state_2["total_profit"] += round_margin_2
                     betting_state_2["session_balance"] += round_margin_2
                     balance_for_log_2 = betting_state_2.get("session_balance", 0)
-                else:
-                    log_suffix_2 = " [⏳ WAIT ACCOUNTING]"
 
                 round_targets_display_2 = "[2]" + ", ".join(round_target_labels_2)
                 resolved_round_number_2 = int(pending_bets_2[0].get("round_number", 0) or 0) if pending_bets_2 else 0
-                if restarted_2:
-                    log_suffix_2 += " [♻️ RESTART]"
                 log_line_2 = format_bet_log_func(
                     action="RES",
                     status_icon="✅" if round_margin_2 > 0 else "❌",
@@ -2681,7 +2671,7 @@ async def process_betting_round(
                     real_balance=get_balance_for_log_func(),
                     bets_count=str(resolved_round_number_2).zfill(3),
                 )
-                print(log_line_2 + log_suffix_2, flush=True)
+                print(log_line_2, flush=True)
                 conn_2.commit()
             except Exception as exc_2:
                 print(f"[DB ERROR] Ошибка обновления результата ставки (слот 2): {exc_2}", flush=True)
