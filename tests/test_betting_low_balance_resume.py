@@ -199,6 +199,7 @@ def test_precheck_keeps_api_insufficient_balance_pause_until_fresh_accounting_up
         format_outcome_pretty_func=lambda outcome, specifier: f"{outcome}:{specifier}",
         format_bet_log_func=_format_bet_log_stub,
         get_balance_for_log_func=lambda: "24р",
+        get_db_connection_func=lambda: _FakeConnection(),
         update_runtime_snapshot_func=lambda *args, **kwargs: None,
         required_bank_base_bet=10.0,
         resume_base_bet=10.0,
@@ -229,6 +230,7 @@ def test_precheck_keeps_api_insufficient_balance_pause_until_fresh_accounting_up
         format_outcome_pretty_func=lambda outcome, specifier: f"{outcome}:{specifier}",
         format_bet_log_func=_format_bet_log_stub,
         get_balance_for_log_func=lambda: "14р",
+        get_db_connection_func=lambda: _FakeConnection(),
         update_runtime_snapshot_func=lambda *args, **kwargs: None,
         required_bank_base_bet=10.0,
         resume_base_bet=10.0,
@@ -456,7 +458,7 @@ def test_false_win_waits_for_accounting_then_repeats_same_step() -> None:
     )
 
 
-def test_false_win_without_accounting_update_does_not_skip_next_round() -> None:
+def test_false_win_without_fresh_accounting_update_is_not_resolved_by_new_round() -> None:
     runtime_config = _make_runtime_config()
     runtime_context = _make_single_slot_runtime_context()
     runtime_context.betting_state["current_step"] = 2
@@ -538,6 +540,41 @@ def test_false_win_without_accounting_update_does_not_skip_next_round() -> None:
         }
     )
     asyncio.run(_run_round(followup_payload))
+
+    assert placed_calls == []
+    assert runtime_context.betting_state["pending_win_confirmation"] is not None
+    assert runtime_context.betting_state["current_step"] == 2
+    assert runtime_context.betting_state["session_balance"] == 0.0
+    assert runtime_context.betting_state["total_profit"] == 0.0
+    assert runtime_context.betting_state["pending_expected_settlement_credit"] == 57.0
+    assert not any(
+        params[0] == "false_win"
+        for connection in db_connections
+        for _, params in connection.cursor_instance.executed
+        if params
+    )
+
+    update_balance_from_accounting_payload(
+        json.dumps({"type": "balance_update", "balance_update": {"code": 200, "balance_type": 1, "value": 1450.0}}),
+        runtime_context=runtime_context,
+        runtime_config=runtime_config,
+        format_ws_payload_func=lambda payload: payload,
+        record_accounting_rejection_func=lambda *args, **kwargs: None,
+        update_runtime_snapshot_func=lambda *args, **kwargs: None,
+        queue_telegram_notification_func=lambda *args, **kwargs: None,
+    )
+
+    third_payload = json.dumps(
+        {
+            "status": "rng_values",
+            "game_id": "game-false-win-no-accounting-3",
+            "results": {
+                "dice": [{"color": "yellow", "value": 4}, {"color": "red", "value": 6}],
+                "player": {"name": "tester", "position": "right"},
+            },
+        }
+    )
+    asyncio.run(_run_round(third_payload))
 
     assert placed_calls == [(["R1"], 10.0)]
     assert runtime_context.betting_state["pending_win_confirmation"] is None

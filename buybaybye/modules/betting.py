@@ -234,7 +234,7 @@ def _refresh_reconciliation_phase(betting_state: dict) -> None:
         betting_state["reconciliation_phase"] = "idle"
 
 
-def _get_pending_win_confirmation_outcome(betting_state: dict, current_game_id: str | None = None) -> str:
+def _get_pending_win_confirmation_outcome(betting_state: dict) -> str:
     pending_confirmation = betting_state.get("pending_win_confirmation")
     if not isinstance(pending_confirmation, dict) or not pending_confirmation:
         return "none"
@@ -247,13 +247,15 @@ def _get_pending_win_confirmation_outcome(betting_state: dict, current_game_id: 
     if remaining_settlement_credit + BETTING_BALANCE_EPSILON < expected_settlement_credit:
         return "confirmed"
 
+    if _normalize_account_balance(betting_state.get("account_balance")) is None:
+        return "pending"
+
     confirmed_at = _parse_iso_datetime(pending_confirmation.get("recorded_at"))
     account_balance_updated_at = _parse_iso_datetime(betting_state.get("account_balance_updated_at"))
-    if confirmed_at is not None and account_balance_updated_at is not None and account_balance_updated_at > confirmed_at:
-        return FALSE_WIN_STATUS
+    if confirmed_at is None or account_balance_updated_at is None or account_balance_updated_at <= confirmed_at:
+        return "pending"
 
-    pending_game_id = pending_confirmation.get("game_id")
-    if current_game_id and pending_game_id and current_game_id != pending_game_id:
+    if account_balance_updated_at > confirmed_at:
         return FALSE_WIN_STATUS
 
     return "pending"
@@ -262,15 +264,11 @@ def _get_pending_win_confirmation_outcome(betting_state: dict, current_game_id: 
 def _finalize_pending_win_confirmation_if_ready(
     *,
     betting_state: dict,
-    current_game_id: str | None,
     get_db_connection_func,
     update_runtime_snapshot_func,
     slot_label: str,
 ) -> str:
-    confirmation_outcome = _get_pending_win_confirmation_outcome(
-        betting_state,
-        current_game_id=current_game_id,
-    )
+    confirmation_outcome = _get_pending_win_confirmation_outcome(betting_state)
     if confirmation_outcome not in {"confirmed", FALSE_WIN_STATUS}:
         return confirmation_outcome
 
@@ -349,6 +347,22 @@ def _finalize_pending_win_confirmation_if_ready(
         },
     )
     return confirmation_outcome
+
+
+def _run_pending_win_confirmation_precheck(
+    *,
+    betting_state: dict,
+    get_db_connection_func,
+    update_runtime_snapshot_func,
+    slot_label: str,
+) -> bool:
+    confirmation_outcome = _finalize_pending_win_confirmation_if_ready(
+        betting_state=betting_state,
+        get_db_connection_func=get_db_connection_func,
+        update_runtime_snapshot_func=update_runtime_snapshot_func,
+        slot_label=slot_label,
+    )
+    return confirmation_outcome != "pending"
 
 
 def _has_fresh_accounting_update_after_api_fail(betting_state: dict) -> bool:
@@ -496,6 +510,7 @@ def _run_set_precheck_for_slot(
     format_outcome_pretty_func,
     format_bet_log_func,
     get_balance_for_log_func,
+    get_db_connection_func,
     update_runtime_snapshot_func,
     required_bank_base_bet: float,
     resume_base_bet: float,
@@ -503,6 +518,14 @@ def _run_set_precheck_for_slot(
     betting_config = runtime_config.betting
     normalized_targets = tuple(bet_targets)
     if not normalized_targets:
+        return False, (), amount
+
+    if not _run_pending_win_confirmation_precheck(
+        betting_state=betting_state,
+        get_db_connection_func=get_db_connection_func,
+        update_runtime_snapshot_func=update_runtime_snapshot_func,
+        slot_label=slot_label,
+    ):
         return False, (), amount
 
     _slot_prefix = f"[{slot_label or '1'}]"
@@ -956,6 +979,14 @@ async def place_bets(
         return False
 
     try:
+        if not _run_pending_win_confirmation_precheck(
+            betting_state=betting_state,
+            get_db_connection_func=get_db_connection_func,
+            update_runtime_snapshot_func=update_runtime_snapshot_func,
+            slot_label=slot_label,
+        ):
+            return False
+
         step_for_history = betting_state.get("current_step", 0)
         max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
         available_balance = _normalize_account_balance(betting_state.get("account_balance"))
@@ -2523,7 +2554,6 @@ async def process_betting_round(
             if round_margin > 0:
                 betting_state["pending_win_confirmation"] = {
                     "recorded_at": datetime.now(timezone.utc).isoformat(),
-                    "game_id": game_id,
                     "expected_settlement_credit": settlement_credit,
                     "round_margin": round_margin,
                     "max_steps": max_steps,
@@ -2653,7 +2683,6 @@ async def process_betting_round(
                 if round_margin_2 > 0:
                     betting_state_2["pending_win_confirmation"] = {
                         "recorded_at": datetime.now(timezone.utc).isoformat(),
-                        "game_id": game_id,
                         "expected_settlement_credit": settlement_credit_2,
                         "round_margin": round_margin_2,
                         "max_steps": max_steps_2,
@@ -2706,26 +2735,24 @@ async def process_betting_round(
                 except Exception:
                     pass
 
-    pending_win_confirmation_status = _finalize_pending_win_confirmation_if_ready(
+    if not _run_pending_win_confirmation_precheck(
         betting_state=betting_state,
-        current_game_id=game_id,
         get_db_connection_func=get_db_connection_func,
         update_runtime_snapshot_func=update_runtime_snapshot_func,
         slot_label="1",
-    )
-    pending_win_confirmation_status_2 = "none"
-    if betting_state_2 is not None:
-        pending_win_confirmation_status_2 = _finalize_pending_win_confirmation_if_ready(
-            betting_state=betting_state_2,
-            current_game_id=game_id,
-            get_db_connection_func=get_db_connection_func,
-            update_runtime_snapshot_func=update_runtime_snapshot_func,
-            slot_label="2",
-        )
-
-    if pending_win_confirmation_status == "pending" or pending_win_confirmation_status_2 == "pending":
+    ):
         if bet_debug_enabled:
-            print("[DEBUG PROCESS] Ждём подтверждения выигрыша по accounting, новый SET пропущен.", flush=True)
+            print("[DEBUG PROCESS] Ждём подтверждения выигрыша по accounting перед новым SET слот 1.", flush=True)
+        return
+
+    if betting_state_2 is not None and not _run_pending_win_confirmation_precheck(
+        betting_state=betting_state_2,
+        get_db_connection_func=get_db_connection_func,
+        update_runtime_snapshot_func=update_runtime_snapshot_func,
+        slot_label="2",
+    ):
+        if bet_debug_enabled:
+            print("[DEBUG PROCESS] Ждём подтверждения выигрыша по accounting перед новым SET слот 2.", flush=True)
         return
 
     slot2_configured_tokens = set(runtime_context.get_configured_target_tokens_2())
@@ -2877,6 +2904,7 @@ async def process_betting_round(
             format_outcome_pretty_func=format_outcome_pretty_func,
             format_bet_log_func=format_bet_log_func,
             get_balance_for_log_func=get_balance_for_log_func,
+            get_db_connection_func=get_db_connection_func,
             update_runtime_snapshot_func=update_runtime_snapshot_func,
             required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
             resume_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
@@ -2911,6 +2939,7 @@ async def process_betting_round(
             format_outcome_pretty_func=format_outcome_pretty_func,
             format_bet_log_func=format_bet_log_func,
             get_balance_for_log_func=get_balance_for_log_func,
+            get_db_connection_func=get_db_connection_func,
             update_runtime_snapshot_func=update_runtime_snapshot_func,
             required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
             resume_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
@@ -2923,6 +2952,75 @@ async def process_betting_round(
 
         slot1_ready_for_combined = bool(bet_targets_to_place)
         slot2_ready_for_combined = bool(slot2_targets_to_place)
+    else:
+        if bet_targets_to_place:
+            slot1_step_for_history = int((runtime_context.betting_state or {}).get("current_step", 0) or 0)
+            slot1_max_steps = len((runtime_context.current_strategy or {}).get("coefficients", [1])) if runtime_context.current_strategy else 15
+            slot1_round_display = str(int((runtime_context.betting_state or {}).get("total_bet_rounds", 0) or 0) + 1).zfill(3)
+            slot1_precheck_ok, slot1_effective_targets, slot1_effective_amount = _run_set_precheck_for_slot(
+                betting_state=runtime_context.betting_state,
+                current_strategy=runtime_context.current_strategy or {},
+                amount=bet_amount,
+                bet_targets=bet_targets_to_place,
+                requested_targets=bet_targets_to_place,
+                slot_label="1",
+                step_for_history=slot1_step_for_history,
+                max_steps=slot1_max_steps,
+                next_round_display=slot1_round_display,
+                runtime_config=runtime_config,
+                calculate_roi_func=calculate_roi_func,
+                format_outcome_pretty_func=format_outcome_pretty_func,
+                format_bet_log_func=format_bet_log_func,
+                get_balance_for_log_func=get_balance_for_log_func,
+                get_db_connection_func=get_db_connection_func,
+                update_runtime_snapshot_func=update_runtime_snapshot_func,
+                required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
+                resume_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
+            )
+            if slot1_precheck_ok:
+                bet_targets_to_place = slot1_effective_targets
+                bet_amount = slot1_effective_amount
+            else:
+                bet_targets_to_place = ()
+
+        if slot2_targets_to_place and runtime_context.betting_state_2 is not None:
+            def slot2_calculate_roi_func() -> float:
+                if runtime_context.betting_state_2 and runtime_context.betting_state_2.get("total_bet_amount", 0) > 0:
+                    return (
+                        runtime_context.betting_state_2.get("total_profit", 0)
+                        / runtime_context.betting_state_2.get("total_bet_amount", 1)
+                        * 100
+                    )
+                return 0.0
+
+            slot2_step_for_history = int((runtime_context.betting_state_2 or {}).get("current_step", 0) or 0)
+            slot2_max_steps = len((runtime_context.current_strategy_2 or {}).get("coefficients", [1])) if runtime_context.current_strategy_2 else 15
+            slot2_round_display = str(int((runtime_context.betting_state_2 or {}).get("total_bet_rounds", 0) or 0) + 1).zfill(3)
+            slot2_precheck_ok, slot2_effective_targets, slot2_effective_amount = _run_set_precheck_for_slot(
+                betting_state=runtime_context.betting_state_2,
+                current_strategy=runtime_context.current_strategy_2 or {},
+                amount=slot2_amount,
+                bet_targets=slot2_targets_to_place,
+                requested_targets=slot2_targets_to_place,
+                slot_label="2",
+                step_for_history=slot2_step_for_history,
+                max_steps=slot2_max_steps,
+                next_round_display=slot2_round_display,
+                runtime_config=runtime_config,
+                calculate_roi_func=slot2_calculate_roi_func,
+                format_outcome_pretty_func=format_outcome_pretty_func,
+                format_bet_log_func=format_bet_log_func,
+                get_balance_for_log_func=get_balance_for_log_func,
+                get_db_connection_func=get_db_connection_func,
+                update_runtime_snapshot_func=update_runtime_snapshot_func,
+                required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
+                resume_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
+            )
+            if slot2_precheck_ok:
+                slot2_targets_to_place = slot2_effective_targets
+                slot2_amount = slot2_effective_amount
+            else:
+                slot2_targets_to_place = ()
 
     # Общий precheck по shared balance: если на оба слота не хватает,
     # размещаем только один слот (предпочтение slot1) и явно логируем пропуск второго.
