@@ -15,6 +15,7 @@ class ReconciliationState:
     pending_expected_bet_drop: float = 0.0
     pending_expected_settlement_credit: float = 0.0
     early_settlement_credit_buffer: float = 0.0
+    early_bet_drop_debit_buffer: float = 0.0
     external_deposits_total: float = 0.0
     external_withdrawals_total: float = 0.0
     last_external_balance_change_type: str | None = None
@@ -43,6 +44,7 @@ class RuntimeBettingState:
     pending_expected_bet_drop: float = 0.0
     pending_expected_settlement_credit: float = 0.0
     early_settlement_credit_buffer: float = 0.0
+    early_bet_drop_debit_buffer: float = 0.0
     external_deposits_total: float = 0.0
     external_withdrawals_total: float = 0.0
     reconciliation_phase: str = "idle"
@@ -103,6 +105,7 @@ class RuntimeBettingState:
     def _sync_reconciliation(self) -> None:
         self.reconciliation.pending_expected_bet_drop = float(self.pending_expected_bet_drop or 0.0)
         self.reconciliation.pending_expected_settlement_credit = float(self.pending_expected_settlement_credit or 0.0)
+        self.reconciliation.early_bet_drop_debit_buffer = float(self.early_bet_drop_debit_buffer or 0.0)
         self.reconciliation.external_deposits_total = float(self.external_deposits_total or 0.0)
         self.reconciliation.external_withdrawals_total = float(self.external_withdrawals_total or 0.0)
         self.reconciliation.phase = self.reconciliation_phase

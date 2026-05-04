@@ -131,3 +131,49 @@ def test_accounting_detects_external_withdrawal_on_active_balance_stream() -> No
     assert runtime_context.betting_state["account_balance"] == 420.0
     assert runtime_context.betting_state["reconciliation_phase"] == "external_withdrawal"
     assert snapshots[-1][1]["withdrawal_detected"] is True
+
+
+def test_accounting_ignores_delayed_drop_after_out_of_order_rise_with_two_slots() -> None:
+    runtime_context = RuntimeContext(bet_mode_outcome="red", bet_mode_specifier="5")
+    runtime_context.betting_state = build_runtime_betting_state(strategy=None, bet_mode_outcome="red", bet_mode_specifier="5")
+    runtime_context.betting_state_2 = build_runtime_betting_state(strategy=None, bet_mode_outcome="yellow", bet_mode_specifier="3")
+
+    runtime_context.betting_state["account_balance"] = 1000.0
+    runtime_context.betting_state["pending_expected_bet_drop"] = 50.0
+    runtime_context.betting_state["pending_bets"] = [{"token": "R5", "amount": 50.0}]
+
+    runtime_context.betting_state_2["pending_expected_bet_drop"] = 20.0
+    runtime_context.betting_state_2["pending_bets"] = [{"token": "Y3", "amount": 20.0}]
+
+    snapshots = []
+
+    # Ранний рост баланса поглощает ожидаемый drop и попадает в bet-drop buffer.
+    update_balance_from_accounting_payload(
+        json.dumps({"type": "balance_update", "balance_update": {"code": 200, "balance_type": 1, "value": 1070.0}}),
+        runtime_context=runtime_context,
+        runtime_config=make_runtime_config(),
+        format_ws_payload_func=lambda payload: payload,
+        record_accounting_rejection_func=lambda *args, **kwargs: None,
+        update_runtime_snapshot_func=lambda event_type, extra=None: snapshots.append((event_type, extra or {})),
+        queue_telegram_notification_func=lambda *args, **kwargs: None,
+    )
+
+    assert runtime_context.betting_state["early_bet_drop_debit_buffer"] == 70.0
+    assert runtime_context.betting_state["external_deposits_total"] == 0.0
+    assert runtime_context.betting_state["external_withdrawals_total"] == 0.0
+
+    # Позднее списание приходит out-of-order и должно погаситься из buffer без external withdrawal.
+    update_balance_from_accounting_payload(
+        json.dumps({"type": "balance_update", "balance_update": {"code": 200, "balance_type": 1, "value": 1000.0}}),
+        runtime_context=runtime_context,
+        runtime_config=make_runtime_config(),
+        format_ws_payload_func=lambda payload: payload,
+        record_accounting_rejection_func=lambda *args, **kwargs: None,
+        update_runtime_snapshot_func=lambda event_type, extra=None: snapshots.append((event_type, extra or {})),
+        queue_telegram_notification_func=lambda *args, **kwargs: None,
+    )
+
+    assert runtime_context.betting_state["external_withdrawals_total"] == 0.0
+    assert runtime_context.betting_state["external_deposits_total"] == 0.0
+    assert runtime_context.betting_state["early_bet_drop_debit_buffer"] == 0.0
+    assert snapshots[-1][1]["withdrawal_detected"] is False
