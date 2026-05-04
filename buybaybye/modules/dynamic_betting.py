@@ -319,13 +319,17 @@ def get_best_combination(
         parts = combo_key.split("_")
         return (parts[0], parts[1])
 
+    candidate_colors = ("red", "yellow")
+    if dynamic_config.lock_color and default_outcome in {"red", "yellow"}:
+        candidate_colors = (default_outcome,)
+
     candidates: list[tuple[str, dict]] = []
-    for color in ("red", "yellow"):
+    for color in candidate_colors:
         weighted_sum = 0
         total_hits = 0
         for value in range(1, 7):
             combo_key = f"{color}_{value}"
-            combo_stats = stats.get(combo_key)
+            combo_stats = selectable_stats.get(combo_key)
             if not combo_stats:
                 continue
             freq_count = int(combo_stats.get("freq", 0) or 0)
@@ -338,7 +342,7 @@ def get_best_combination(
         avg_value = weighted_sum / total_hits
         rounded_value = max(1, min(6, int(avg_value + 0.5)))
         candidate_key = f"{color}_{rounded_value}"
-        candidate_stats = stats.get(candidate_key, {"freq": 0, "frequency": 0.0})
+        candidate_stats = selectable_stats.get(candidate_key, {"freq": 0, "frequency": 0.0})
         candidates.append((candidate_key, {
             "freq": int(candidate_stats.get("freq", 0) or 0),
             "frequency": float(candidate_stats.get("frequency", 0.0) or 0.0),
