@@ -232,6 +232,14 @@ def get_best_combinations(
     if not selectable_stats:
         return tuple(), {"red": 0, "yellow": 0, "double": 0}
 
+    if dynamic_config.lock_color:
+        allowed_colors = {
+            target.outcome for target in configured_targets
+        }
+        selectable_stats = {k: v for k, v in selectable_stats.items() if _combo_color_key(k) in allowed_colors}
+        if not selectable_stats:
+            return tuple(), {"red": 0, "yellow": 0, "double": 0}
+
     ranked_keys = [
         combo_key
         for combo_key, _ in sorted(selectable_stats.items(), key=_stats_sort_key, reverse=True)
@@ -290,6 +298,11 @@ def get_best_combination(
     selectable_stats = dict(stats)
     if not dynamic_config.include_double_selection:
         selectable_stats.pop("double", None)
+
+    if dynamic_config.lock_color and default_outcome != "double":
+        selectable_stats = {k: v for k, v in selectable_stats.items() if _combo_color_key(k) == default_outcome}
+        if bet_debug_enabled:
+            print(f"[DEBUG DYNAMIC] lock_color=True: ограничиваем выбор цветом '{default_outcome}', доступно комбинаций: {len(selectable_stats)}", flush=True)
 
     if not selectable_stats:
         return (default_outcome, default_specifier)

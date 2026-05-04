@@ -141,6 +141,7 @@ class DynamicBettingConfig:
     enabled_2: bool = False
     multi_target_enabled: bool = False
     preserve_color_ratio: bool = False
+    lock_color: bool = False
 
 
 @dataclass(slots=True)
@@ -358,6 +359,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             random_fallback_loss_streak=max(1, int(os.getenv("DYNAMIC_RANDOM_FALLBACK_LOSS_STREAK", "15"))),
             multi_target_enabled=_env_bool("DYNAMIC_MULTI_TARGET_ENABLED"),
             preserve_color_ratio=_env_bool("DYNAMIC_PRESERVE_COLOR_RATIO"),
+            lock_color=_env_bool("DYNAMIC_LOCK_COLOR"),
         ),
         accounting=AccountingConfig(
             balance_stale_seconds=float(os.getenv("ACCOUNTING_BALANCE_STALE_SECONDS", "15")),
