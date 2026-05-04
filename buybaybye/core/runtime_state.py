@@ -14,6 +14,7 @@ class ReconciliationState:
     phase: str = "idle"
     pending_expected_bet_drop: float = 0.0
     pending_expected_settlement_credit: float = 0.0
+    early_settlement_credit_buffer: float = 0.0
     external_deposits_total: float = 0.0
     external_withdrawals_total: float = 0.0
     last_external_balance_change_type: str | None = None
@@ -41,6 +42,7 @@ class RuntimeBettingState:
     accounting_consecutive_page_crashes: int = 0
     pending_expected_bet_drop: float = 0.0
     pending_expected_settlement_credit: float = 0.0
+    early_settlement_credit_buffer: float = 0.0
     external_deposits_total: float = 0.0
     external_withdrawals_total: float = 0.0
     reconciliation_phase: str = "idle"

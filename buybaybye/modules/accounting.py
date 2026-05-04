@@ -183,12 +183,42 @@ def update_balance_from_accounting_payload(
     previous_balance = betting_state.get("account_balance")
     pending_expected_bet_drop = float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0)
     pending_expected_settlement_credit = float(betting_state.get("pending_expected_settlement_credit", 0.0) or 0.0)
+    early_settlement_credit_buffer = float(betting_state.get("early_settlement_credit_buffer", 0.0) or 0.0)
 
     # Учитываем pending-значения второго слота (они хранятся в отдельном betting_state_2,
     # но деньги на одном счёте, поэтому сверяем суммарные ожидаемые движения).
     betting_state_2_ref = getattr(runtime_context, "betting_state_2", None)
     slot2_pending_bet_drop = float((betting_state_2_ref or {}).get("pending_expected_bet_drop", 0.0) or 0.0)
     slot2_pending_settlement = float((betting_state_2_ref or {}).get("pending_expected_settlement_credit", 0.0) or 0.0)
+
+    # Если рост баланса пришел раньше RES (race), накапливаем его в буфере и
+    # затем погашаем им ожидаемый settlement_credit, когда тот появится.
+    if early_settlement_credit_buffer > 0.009:
+        total_pending_settlement_for_buffer = pending_expected_settlement_credit + slot2_pending_settlement
+        if total_pending_settlement_for_buffer > 0.009:
+            covered_by_early_buffer = min(early_settlement_credit_buffer, total_pending_settlement_for_buffer)
+            slot1_buffer_used = min(covered_by_early_buffer, pending_expected_settlement_credit)
+            slot2_buffer_used = covered_by_early_buffer - slot1_buffer_used
+
+            pending_expected_settlement_credit = max(0.0, pending_expected_settlement_credit - slot1_buffer_used)
+            if betting_state_2_ref is not None:
+                betting_state_2_ref["pending_expected_settlement_credit"] = max(
+                    0.0,
+                    slot2_pending_settlement - slot2_buffer_used,
+                )
+                slot2_pending_settlement = max(0.0, slot2_pending_settlement - slot2_buffer_used)
+
+            early_settlement_credit_buffer = max(0.0, early_settlement_credit_buffer - covered_by_early_buffer)
+
+            if runtime_config.betting.debug_enabled:
+                print(
+                    (
+                        "[ACCOUNTING][DEBUG] early settlement buffer погасил ожидаемый settlement: "
+                        f"covered={covered_by_early_buffer:.0f}р, "
+                        f"buffer_left={early_settlement_credit_buffer:.0f}р"
+                    ),
+                    flush=True,
+                )
 
     withdrawal_detected = False
     withdrawal_amount = 0.0
@@ -262,6 +292,25 @@ def update_balance_from_accounting_payload(
                         flush=True,
                     )
         if remaining_rise > 0.009:
+            pending_bets_slot1 = bool(betting_state.get("pending_bets"))
+            pending_bets_slot2 = bool((betting_state_2_ref or {}).get("pending_bets"))
+            total_pending_settlement_after_cover = pending_expected_settlement_credit + slot2_pending_settlement
+
+            # Если есть pending_bets, но ожидаемый settlement еще не выставлен,
+            # считаем этот рост ранним settlement и не маркируем как депозит.
+            if total_pending_settlement_after_cover <= 0.009 and (pending_bets_slot1 or pending_bets_slot2):
+                early_settlement_credit_buffer += remaining_rise
+                if runtime_config.betting.debug_enabled:
+                    print(
+                        (
+                            "[ACCOUNTING][DEBUG] Зафиксирован ранний рост баланса до RES, "
+                            f"переносим в buffer: +{remaining_rise:.0f}р"
+                        ),
+                        flush=True,
+                    )
+                remaining_rise = 0.0
+
+        if remaining_rise > 0.009:
             deposit_detected = True
             deposit_amount = remaining_rise
             betting_state["external_deposits_total"] = betting_state.get("external_deposits_total", 0.0) + deposit_amount
@@ -282,6 +331,7 @@ def update_balance_from_accounting_payload(
 
     betting_state["pending_expected_bet_drop"] = pending_expected_bet_drop
     betting_state["pending_expected_settlement_credit"] = pending_expected_settlement_credit
+    betting_state["early_settlement_credit_buffer"] = early_settlement_credit_buffer
     if pending_expected_bet_drop > 0.009:
         betting_state["reconciliation_phase"] = "awaiting_bet_drop"
     elif pending_expected_settlement_credit > 0.009:
