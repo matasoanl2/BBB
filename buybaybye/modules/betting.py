@@ -778,6 +778,8 @@ async def place_bets(
         step_for_history = betting_state.get("current_step", 0)
         max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
         payload = {"bets": [_build_bet_payload(target, amount) for target in normalized_targets]}
+        target_tokens = [target.token for target in normalized_targets]
+        payload_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         headers = {
             "Content-Type": "application/json",
             "Referer": "https://betboom.ru/game/nardsgame",
@@ -787,9 +789,39 @@ async def place_bets(
         if jwt_token:
             headers["X-Access-Token"] = jwt_token
 
+        if betting_config.post_log_enabled:
+            request_message = (
+                "[POST-SET][REQ] "
+                f"url={runtime_config.browser.bet_api_url} "
+                f"slot={slot_label or '1'} "
+                f"round={next_round_display} "
+                f"targets={target_tokens} "
+                f"amount_per_target={amount:.0f} "
+                f"total_amount={total_round_amount:.0f} "
+                f"payload={payload_text}"
+            )
+            _print_bet_system_log(
+                runtime_config=runtime_config,
+                event="bet_post_request",
+                level="info",
+                message=request_message,
+                extra={
+                    "url": runtime_config.browser.bet_api_url,
+                    "slot": slot_label or "1",
+                    "round": next_round_display,
+                    "target_tokens": target_tokens,
+                    "amount_per_target": amount,
+                    "total_amount": total_round_amount,
+                    "payload": payload,
+                },
+            )
+
         response = await page.request.post(runtime_config.browser.bet_api_url, data=json.dumps(payload), headers=headers)
         status_code = response.status
         response_text = await response.text()
+        response_text_preview = response_text
+        if len(response_text_preview) > 800:
+            response_text_preview = response_text_preview[:800] + "...(truncated)"
 
         try:
             response_json = json.loads(response_text)
@@ -797,6 +829,30 @@ async def place_bets(
                 status_code = response_json["code"]
         except (json.JSONDecodeError, ValueError):
             pass
+
+        if betting_config.post_log_enabled:
+            response_message = (
+                "[POST-SET][RES] "
+                f"url={runtime_config.browser.bet_api_url} "
+                f"slot={slot_label or '1'} "
+                f"round={next_round_display} "
+                f"status={status_code} "
+                f"body={response_text_preview}"
+            )
+            _print_bet_system_log(
+                runtime_config=runtime_config,
+                event="bet_post_response",
+                level="info",
+                message=response_message,
+                extra={
+                    "url": runtime_config.browser.bet_api_url,
+                    "slot": slot_label or "1",
+                    "round": next_round_display,
+                    "status": status_code,
+                    "body_preview": response_text_preview,
+                    "body_truncated": len(response_text) > 800,
+                },
+            )
 
         if betting_config.debug_enabled:
             print("[DEBUG] ========== BATCH BET REQUEST ==========>", flush=True)
