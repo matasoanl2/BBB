@@ -237,16 +237,30 @@ def update_balance_from_accounting_payload(
             betting_state_2_ref["pending_expected_settlement_credit"] = max(0.0, slot2_pending_settlement - slot2_credit_used)
             slot2_pending_settlement = max(0.0, slot2_pending_settlement - slot2_credit_used)
         remaining_rise = actual_rise - covered_by_settlement
-        if covered_by_settlement > 0.009 and remaining_rise > 0.0:
+        # pending_expected_bet_drop может быть ненулевым, если:
+        # 1) ставка была зафиксирована как pending, но WS пришёл раньше HTTP-ответа (race condition)
+        #    → списание уже обработано как вывод, но pending остался;
+        # 2) PAUSE/RESUME вернул ставку на счёт без уменьшения баланса.
+        # В обоих случаях необходимо погасить pending_expected_bet_drop встречным ростом баланса,
+        # чтобы сиротский остаток не вызвал ложный депозит позднее.
+        # Поглощение выполняется ВСЕГДА при remaining_rise > 0, независимо от наличия settlement.
+        if remaining_rise > 0.0:
             total_remaining_bet_drop = pending_expected_bet_drop + slot2_pending_bet_drop
-            covered_by_pending_drop = min(remaining_rise, total_remaining_bet_drop)
-            slot1_drop_used2 = min(covered_by_pending_drop, pending_expected_bet_drop)
-            slot2_drop_used2 = covered_by_pending_drop - slot1_drop_used2
-            pending_expected_bet_drop = max(0.0, pending_expected_bet_drop - slot1_drop_used2)
-            if betting_state_2_ref is not None:
-                betting_state_2_ref["pending_expected_bet_drop"] = max(0.0, slot2_pending_bet_drop - slot2_drop_used2)
-                slot2_pending_bet_drop = max(0.0, slot2_pending_bet_drop - slot2_drop_used2)
-            remaining_rise -= covered_by_pending_drop
+            if total_remaining_bet_drop > 0.009:
+                covered_by_pending_drop = min(remaining_rise, total_remaining_bet_drop)
+                slot1_drop_used2 = min(covered_by_pending_drop, pending_expected_bet_drop)
+                slot2_drop_used2 = covered_by_pending_drop - slot1_drop_used2
+                pending_expected_bet_drop = max(0.0, pending_expected_bet_drop - slot1_drop_used2)
+                if betting_state_2_ref is not None:
+                    betting_state_2_ref["pending_expected_bet_drop"] = max(0.0, slot2_pending_bet_drop - slot2_drop_used2)
+                    slot2_pending_bet_drop = max(0.0, slot2_pending_bet_drop - slot2_drop_used2)
+                remaining_rise -= covered_by_pending_drop
+                if runtime_config.betting.debug_enabled and covered_by_pending_drop > 0.009:
+                    print(
+                        f"[ACCOUNTING][DEBUG] pending_expected_bet_drop погасил рост баланса: "
+                        f"covered={covered_by_pending_drop:.0f}р, remaining={remaining_rise:.0f}р",
+                        flush=True,
+                    )
         if remaining_rise > 0.009:
             deposit_detected = True
             deposit_amount = remaining_rise

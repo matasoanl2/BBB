@@ -588,6 +588,43 @@ def _run_set_precheck_for_slot(
                 )
             return False, (), amount
 
+    max_stake_percent_of_bank = float(getattr(betting_config, "max_stake_percent_of_bank", 0.0) or 0.0)
+    if max_stake_percent_of_bank > 0 and available_balance is not None and required_bank_units > 5:
+        max_allowed_amount = available_balance * (max_stake_percent_of_bank / 100.0)
+        if amount > max_allowed_amount + 1e-9:
+            coefficients = (current_strategy or {}).get("coefficients", [1])
+            first_coefficient = float(coefficients[0]) if coefficients else 1.0
+            reset_base_amount = float(resume_base_bet if resume_base_bet > 0 else required_bank_base_bet)
+            reset_amount = reset_base_amount * first_coefficient if reset_base_amount > 0 else amount
+            previous_amount = amount
+            previous_step_for_history = int(step_for_history or 0)
+
+            amount = reset_amount
+            betting_state["current_step"] = 0
+            step_for_history = 0
+            total_round_amount = amount * len(normalized_targets)
+
+            _print_bet_system_log(
+                runtime_config=runtime_config,
+                event="set_step_reset_by_percent_limit",
+                level="info",
+                message=(
+                    "[SET-CHECK] Ставка превысила лимит доли банка; "
+                    "сбрасываем шаг на 1 и пересчитываем сумму ставки."
+                ),
+                extra={
+                    "slot": slot_label or "1",
+                    "account_balance": available_balance,
+                    "max_stake_percent_of_bank": max_stake_percent_of_bank,
+                    "required_bank_base_bet_units": required_bank_units,
+                    "max_allowed_amount": max_allowed_amount,
+                    "previous_amount": previous_amount,
+                    "reset_amount": amount,
+                    "previous_step_for_history": previous_step_for_history,
+                    "step_for_history": step_for_history,
+                },
+            )
+
     if available_balance is None:
         if was_low_balance_paused:
             return False, (), amount
@@ -999,6 +1036,47 @@ async def place_bets(
                         },
                     )
                 return False
+
+        max_stake_percent_of_bank = float(getattr(betting_config, "max_stake_percent_of_bank", 0.0) or 0.0)
+        if max_stake_percent_of_bank > 0 and available_balance is not None and required_bank_units > 5:
+            max_allowed_amount = available_balance * (max_stake_percent_of_bank / 100.0)
+            if amount > max_allowed_amount + 1e-9:
+                coefficients = current_strategy.get("coefficients", [1]) if current_strategy else [1]
+                first_coefficient = float(coefficients[0]) if coefficients else 1.0
+                resumed_base_amount = (
+                    float(getattr(betting_config, "base_bet_2", 0.0) or 0.0)
+                    if slot_label == "2"
+                    else float(getattr(betting_config, "base_bet", 0.0) or 0.0)
+                )
+                reset_amount = resumed_base_amount * first_coefficient if resumed_base_amount > 0 else amount
+                previous_amount = amount
+                previous_step_for_history = int(step_for_history or 0)
+
+                amount = reset_amount
+                betting_state["current_step"] = 0
+                step_for_history = 0
+                total_round_amount = amount * len(normalized_targets)
+
+                _print_bet_system_log(
+                    runtime_config=runtime_config,
+                    event="set_step_reset_by_percent_limit",
+                    level="info",
+                    message=(
+                        "[SET-CHECK] Ставка превысила лимит доли банка; "
+                        "сбрасываем шаг на 1 и пересчитываем сумму ставки."
+                    ),
+                    extra={
+                        "slot": slot_label or "1",
+                        "account_balance": available_balance,
+                        "max_stake_percent_of_bank": max_stake_percent_of_bank,
+                        "required_bank_base_bet_units": required_bank_units,
+                        "max_allowed_amount": max_allowed_amount,
+                        "previous_amount": previous_amount,
+                        "reset_amount": amount,
+                        "previous_step_for_history": previous_step_for_history,
+                        "step_for_history": step_for_history,
+                    },
+                )
 
         if available_balance is None:
             if was_low_balance_paused:

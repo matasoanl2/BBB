@@ -12,6 +12,10 @@ dashboard_app_module = importlib.import_module("dashboard.app")
 def test_dashboard_health_route(monkeypatch) -> None:
     called = []
 
+    monkeypatch.setattr(dashboard_app_module, "_ensure_dashboard_schema", lambda: None)
+    monkeypatch.setattr(dashboard_app_module, "_init_db_pool", lambda use_retry=False: None)
+    monkeypatch.setattr(dashboard_app_module, "_close_db_pool", lambda: None)
+
     def fake_fetch_one(query: str, params=(), conn=None):
         called.append((query, params, conn))
         return {"ok": 1}
@@ -27,6 +31,9 @@ def test_dashboard_health_route(monkeypatch) -> None:
 
 
 def test_dashboard_split_routes_return_builder_payloads(monkeypatch) -> None:
+    monkeypatch.setattr(dashboard_app_module, "_init_db_pool", lambda use_retry=False: None)
+    monkeypatch.setattr(dashboard_app_module, "_close_db_pool", lambda: None)
+
     status_payload = {
         "snapshot": {"runtime_role": "bettor"},
         "summary": {"freshness_state": "fresh", "reconciliation_phase": "idle"},
@@ -44,25 +51,36 @@ def test_dashboard_split_routes_return_builder_payloads(monkeypatch) -> None:
         "result_curve": [{"wins": 1, "losses": 0, "net": 1, "rolling20": 100.0, "rolling50": 100.0}],
     }
 
+    combined_payload = {
+        "snapshot": status_payload["snapshot"],
+        "summary": status_payload["summary"],
+        "latest_win": status_payload["latest_win"],
+        "recent_bets": history_payload["recent_bets"],
+        "recent_rounds": history_payload["recent_rounds"],
+        "recent_events": history_payload["recent_events"],
+        "latest_bet": history_payload["latest_bet"],
+        "latest_round": history_payload["latest_round"],
+        "balance_series": chart_payload["balance_series"],
+        "result_curve": chart_payload["result_curve"],
+        "slot1_margin_series": [],
+        "slot1_dice_series": [],
+        "slot2_margin_series": [],
+        "slot2_dice_series": [],
+    }
+
     monkeypatch.setattr(dashboard_app_module, "_ensure_dashboard_schema", lambda: None)
-    monkeypatch.setattr(dashboard_app_module, "_build_status_payload", lambda: status_payload)
-    monkeypatch.setattr(dashboard_app_module, "_build_history_payload", lambda: history_payload)
-    monkeypatch.setattr(dashboard_app_module, "_build_chart_payload", lambda: chart_payload)
+    monkeypatch.setattr(dashboard_app_module, "_build_dashboard_payload", lambda: combined_payload)
 
     with TestClient(dashboard_app_module.app) as client:
-        status_response = client.get("/api/status")
-        history_response = client.get("/api/history")
-        charts_response = client.get("/api/charts")
+        dashboard_response = client.get("/api/dashboard")
 
-    assert status_response.status_code == 200
-    assert status_response.json() == status_payload
-    assert history_response.status_code == 200
-    assert history_response.json() == history_payload
-    assert charts_response.status_code == 200
-    assert charts_response.json() == chart_payload
+    assert dashboard_response.status_code == 200
+    assert dashboard_response.json() == combined_payload
 
 
 def test_dashboard_index_renders_html(monkeypatch) -> None:
+    monkeypatch.setattr(dashboard_app_module, "_init_db_pool", lambda use_retry=False: None)
+    monkeypatch.setattr(dashboard_app_module, "_close_db_pool", lambda: None)
     monkeypatch.setattr(dashboard_app_module, "_ensure_dashboard_schema", lambda: None)
     monkeypatch.delenv("DASHBOARD_V2_ENABLED", raising=False)
 
@@ -76,6 +94,8 @@ def test_dashboard_index_renders_html(monkeypatch) -> None:
 
 
 def test_dashboard_index_uses_v2_template_when_flag_enabled(monkeypatch) -> None:
+    monkeypatch.setattr(dashboard_app_module, "_init_db_pool", lambda use_retry=False: None)
+    monkeypatch.setattr(dashboard_app_module, "_close_db_pool", lambda: None)
     monkeypatch.setattr(dashboard_app_module, "_ensure_dashboard_schema", lambda: None)
     monkeypatch.setenv("DASHBOARD_V2_ENABLED", "true")
 
@@ -133,7 +153,7 @@ def test_dashboard_template_uses_server_round_display_and_extended_status_mappin
     template_path = Path(__file__).resolve().parents[1] / "dashboard" / "templates" / "index.html"
     template = template_path.read_text(encoding="utf-8")
 
-    assert 'escapeHtml(round.display || "-")' in template
+    assert 'renderRoundDisplayHtml(round)' in template
     assert 'RED: ${round.red_value ?? \'-\'}' not in template
     for status_name in (
         "paused_low_balance",
