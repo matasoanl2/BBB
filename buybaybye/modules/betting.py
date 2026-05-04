@@ -11,6 +11,11 @@ from buybaybye.core.runtime_context import RuntimeContext
 from buybaybye.core.runtime_config import BetTarget, RuntimeConfig
 
 
+BETTING_BALANCE_EPSILON = 0.009
+WIN_PENDING_CONFIRMATION_STATUS = "win_pending_confirmation"
+FALSE_WIN_STATUS = "false_win"
+
+
 def format_bet_log(
     *,
     action: str,
@@ -215,6 +220,115 @@ def _parse_iso_datetime(raw_value: object) -> datetime | None:
         return datetime.fromisoformat(raw_value)
     except ValueError:
         return None
+
+
+def _refresh_reconciliation_phase(betting_state: dict) -> None:
+    pending_expected_bet_drop = float(betting_state.get("pending_expected_bet_drop", 0.0) or 0.0)
+    pending_expected_settlement_credit = float(betting_state.get("pending_expected_settlement_credit", 0.0) or 0.0)
+
+    if pending_expected_bet_drop > BETTING_BALANCE_EPSILON:
+        betting_state["reconciliation_phase"] = "awaiting_bet_drop"
+    elif pending_expected_settlement_credit > BETTING_BALANCE_EPSILON:
+        betting_state["reconciliation_phase"] = "awaiting_settlement"
+    else:
+        betting_state["reconciliation_phase"] = "idle"
+
+
+def _get_pending_win_confirmation_outcome(betting_state: dict) -> str:
+    pending_confirmation = betting_state.get("pending_win_confirmation")
+    if not isinstance(pending_confirmation, dict) or not pending_confirmation:
+        return "none"
+
+    expected_settlement_credit = float(pending_confirmation.get("expected_settlement_credit", 0.0) or 0.0)
+    if expected_settlement_credit <= BETTING_BALANCE_EPSILON:
+        return "confirmed"
+
+    remaining_settlement_credit = float(betting_state.get("pending_expected_settlement_credit", 0.0) or 0.0)
+    if remaining_settlement_credit + BETTING_BALANCE_EPSILON < expected_settlement_credit:
+        return "confirmed"
+
+    confirmed_at = _parse_iso_datetime(pending_confirmation.get("recorded_at"))
+    account_balance_updated_at = _parse_iso_datetime(betting_state.get("account_balance_updated_at"))
+    if confirmed_at is not None and account_balance_updated_at is not None and account_balance_updated_at > confirmed_at:
+        return FALSE_WIN_STATUS
+
+    return "pending"
+
+
+def _finalize_pending_win_confirmation_if_ready(
+    *,
+    betting_state: dict,
+    get_db_connection_func,
+    update_runtime_snapshot_func,
+    slot_label: str,
+) -> str:
+    confirmation_outcome = _get_pending_win_confirmation_outcome(betting_state)
+    if confirmation_outcome not in {"confirmed", FALSE_WIN_STATUS}:
+        return confirmation_outcome
+
+    pending_confirmation = betting_state.get("pending_win_confirmation") or {}
+    history_ids = [history_id for history_id in pending_confirmation.get("history_ids", []) if history_id is not None]
+    final_status = "win" if confirmation_outcome == "confirmed" else FALSE_WIN_STATUS
+
+    conn = None
+    cursor = None
+    try:
+        conn = get_db_connection_func()
+        cursor = conn.cursor()
+        for history_id in history_ids:
+            cursor.execute(
+                """
+                UPDATE bet_history
+                SET status = %s
+                WHERE id = %s
+                """,
+                (final_status, history_id),
+            )
+        conn.commit()
+    except Exception as exc:
+        print(f"[DB ERROR] Ошибка финализации статуса ставки: {exc}", flush=True)
+    finally:
+        if cursor is not None:
+            cursor.close()
+        if conn is not None:
+            conn.close()
+
+    if confirmation_outcome == "confirmed":
+        round_margin = float(pending_confirmation.get("round_margin", 0.0) or 0.0)
+        betting_state["total_profit"] += round_margin
+        betting_state["session_balance"] += round_margin
+        betting_state["current_step"] = 0
+        betting_state["consecutive_losses"] = 0
+        betting_state["last_set_status"] = "win"
+    else:
+        expected_settlement_credit = float(pending_confirmation.get("expected_settlement_credit", 0.0) or 0.0)
+        remaining_settlement_credit = float(betting_state.get("pending_expected_settlement_credit", 0.0) or 0.0)
+        betting_state["pending_expected_settlement_credit"] = max(0.0, remaining_settlement_credit - expected_settlement_credit)
+        betting_state["current_step"] = int(
+            pending_confirmation.get("current_step_before_resolution", betting_state.get("current_step", 0)) or 0
+        )
+        betting_state["consecutive_losses"] = int(
+            pending_confirmation.get(
+                "consecutive_losses_before_resolution",
+                betting_state.get("consecutive_losses", 0),
+            )
+            or 0
+        )
+        betting_state["last_set_status"] = FALSE_WIN_STATUS
+
+    _refresh_reconciliation_phase(betting_state)
+    betting_state["pending_win_confirmation"] = None
+    update_runtime_snapshot_func(
+        "bet_result_confirmation",
+        {
+            "slot": slot_label,
+            "bet_result_status": final_status,
+            "requested_targets": list(pending_confirmation.get("resolved_target_tokens", [])),
+            "effective_targets": list(pending_confirmation.get("resolved_target_tokens", [])),
+            "bet_result_display": pending_confirmation.get("result_display"),
+        },
+    )
+    return confirmation_outcome
 
 
 def _has_fresh_accounting_update_after_api_fail(betting_state: dict) -> bool:
@@ -2346,6 +2460,8 @@ async def process_betting_round(
             resolved_target_tokens: list[str] = []
             round_target_labels: list[str] = []
             winning_targets = 0
+            history_ids: list[int] = []
+            previous_consecutive_losses = int(betting_state.get("consecutive_losses", 0) or 0)
 
             for pending_bet in pending_bets:
                 target = BetTarget(outcome=pending_bet["outcome"], specifier=pending_bet.get("specifier", ""))
@@ -2363,33 +2479,59 @@ async def process_betting_round(
                 round_target_labels.append(format_outcome_pretty_func(target.outcome, target.specifier))
 
                 if pending_bet.get("history_id") is not None:
+                    history_ids.append(pending_bet["history_id"])
                     cursor.execute(
                         """
                         UPDATE bet_history
                         SET status = %s, result_dice_color = %s, result_dice_value = %s
                         WHERE id = %s
                         """,
-                        (status, stored_dice_color, actual_dice_value, pending_bet["history_id"]),
+                        (
+                            WIN_PENDING_CONFIRMATION_STATUS if is_win else status,
+                            stored_dice_color,
+                            actual_dice_value,
+                            pending_bet["history_id"],
+                        ),
                     )
 
             max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
             betting_state["pending_bets"] = []
             betting_state["pending_expected_settlement_credit"] = settlement_credit
             betting_state["reconciliation_phase"] = "awaiting_settlement" if settlement_credit > 0.009 else "idle"
-            betting_state["total_profit"] += round_margin
-            betting_state["session_balance"] += round_margin
 
             restarted = False
             if round_margin > 0:
-                betting_state["current_step"] = 0
-                betting_state["consecutive_losses"] = 0
+                betting_state["pending_win_confirmation"] = {
+                    "recorded_at": datetime.now(timezone.utc).isoformat(),
+                    "expected_settlement_credit": settlement_credit,
+                    "round_margin": round_margin,
+                    "current_step_before_resolution": current_step_for_log,
+                    "consecutive_losses_before_resolution": previous_consecutive_losses,
+                    "history_ids": history_ids,
+                    "resolved_target_tokens": resolved_target_tokens,
+                    "result_display": actual_dice_representation,
+                }
+                betting_state["last_set_status"] = WIN_PENDING_CONFIRMATION_STATUS
             elif current_step_for_log + 1 >= max_steps:
                 betting_state["current_step"] = 0
                 betting_state["consecutive_losses"] = 0
                 restarted = True
+                betting_state["last_set_status"] = "loss"
             else:
                 betting_state["current_step"] = current_step_for_log + 1
                 betting_state["consecutive_losses"] = betting_state.get("consecutive_losses", 0) + 1
+                betting_state["last_set_status"] = "loss"
+
+            balance_for_log = betting_state["session_balance"]
+            bet_result_status = "loss"
+            log_suffix = ""
+            if round_margin > 0:
+                bet_result_status = WIN_PENDING_CONFIRMATION_STATUS
+                log_suffix = " [⏳ WAIT ACCOUNTING]"
+            else:
+                betting_state["total_profit"] += round_margin
+                betting_state["session_balance"] += round_margin
+                balance_for_log = betting_state["session_balance"]
 
             roi = calculate_roi_func()
             total_bets = betting_state.get("total_bets_placed", 0)
@@ -2408,14 +2550,14 @@ async def process_betting_round(
                 result=actual_dice_representation,
                 profit=f"{round_margin:+.0f}р",
                 roi=f"{roi:.2f}%",
-                balance=f"{betting_state['session_balance']:.0f}р",
+                balance=f"{balance_for_log:.0f}р",
                 real_balance=get_balance_for_log_func(),
                 bets_count=str(resolved_round_number or total_bets).zfill(3),
             )
             if restarted:
                 print(log_line + " [♻️ RESTART]", flush=True)
             else:
-                print(log_line, flush=True)
+                print(log_line + log_suffix, flush=True)
 
             if total_bets > 0 and total_bets % 50 == 0:
                 print_session_stats_func(total_bets)
@@ -2423,7 +2565,7 @@ async def process_betting_round(
                 print_dice_stats_20_func()
 
             result_snapshot_extra = {
-                "bet_result_status": "win" if round_margin > 0 else "loss",
+                "bet_result_status": bet_result_status,
                 "bet_result_value": winning_targets,
                 "bet_result_display": actual_dice_representation,
                 "requested_targets": resolved_target_tokens,
@@ -2457,6 +2599,8 @@ async def process_betting_round(
                 max_steps_2 = len(current_strategy_2.get("coefficients", [1]))
                 settlement_credit_2 = 0.0
                 round_target_labels_2: list[str] = []
+                history_ids_2: list[int] = []
+                previous_consecutive_losses_2 = int(betting_state_2.get("consecutive_losses", 0) or 0)
 
                 for pending_bet in pending_bets_2:
                     target = BetTarget(outcome=pending_bet["outcome"], specifier=pending_bet.get("specifier", ""))
@@ -2469,36 +2613,61 @@ async def process_betting_round(
                     round_margin_2 += margin
                     round_target_labels_2.append(format_outcome_pretty_func(target.outcome, target.specifier))
                     if pending_bet.get("history_id") is not None:
+                        history_ids_2.append(pending_bet["history_id"])
                         cursor_2.execute(
                             """
                             UPDATE bet_history
                             SET status = %s, result_dice_color = %s, result_dice_value = %s
                             WHERE id = %s
                             """,
-                            (status, stored_dice_color_2, actual_dice_value_2, pending_bet["history_id"]),
+                            (
+                                WIN_PENDING_CONFIRMATION_STATUS if is_win else status,
+                                stored_dice_color_2,
+                                actual_dice_value_2,
+                                pending_bet["history_id"],
+                            ),
                         )
 
                 betting_state_2["pending_bets"] = []
                 betting_state_2["pending_expected_settlement_credit"] = settlement_credit_2
                 betting_state_2["reconciliation_phase"] = "awaiting_settlement" if settlement_credit_2 > 0.009 else "idle"
-                betting_state_2["total_profit"] += round_margin_2
-                betting_state_2["session_balance"] += round_margin_2
 
                 restarted_2 = False
                 if round_margin_2 > 0:
-                    betting_state_2["current_step"] = 0
-                    betting_state_2["consecutive_losses"] = 0
+                    betting_state_2["pending_win_confirmation"] = {
+                        "recorded_at": datetime.now(timezone.utc).isoformat(),
+                        "expected_settlement_credit": settlement_credit_2,
+                        "round_margin": round_margin_2,
+                        "current_step_before_resolution": current_step_2,
+                        "consecutive_losses_before_resolution": previous_consecutive_losses_2,
+                        "history_ids": history_ids_2,
+                        "resolved_target_tokens": [pending_bet.get("token") for pending_bet in pending_bets_2 if pending_bet.get("token")],
+                        "result_display": actual_dice_representation,
+                    }
+                    betting_state_2["last_set_status"] = WIN_PENDING_CONFIRMATION_STATUS
                 elif current_step_2 + 1 >= max_steps_2:
                     betting_state_2["current_step"] = 0
                     betting_state_2["consecutive_losses"] = 0
                     restarted_2 = True
+                    betting_state_2["last_set_status"] = "loss"
                 else:
                     betting_state_2["current_step"] = current_step_2 + 1
                     betting_state_2["consecutive_losses"] = betting_state_2.get("consecutive_losses", 0) + 1
+                    betting_state_2["last_set_status"] = "loss"
+
+                balance_for_log_2 = betting_state_2.get("session_balance", 0)
+                log_suffix_2 = ""
+                if round_margin_2 <= 0:
+                    betting_state_2["total_profit"] += round_margin_2
+                    betting_state_2["session_balance"] += round_margin_2
+                    balance_for_log_2 = betting_state_2.get("session_balance", 0)
+                else:
+                    log_suffix_2 = " [⏳ WAIT ACCOUNTING]"
 
                 round_targets_display_2 = "[2]" + ", ".join(round_target_labels_2)
                 resolved_round_number_2 = int(pending_bets_2[0].get("round_number", 0) or 0) if pending_bets_2 else 0
-                log_suffix_2 = " [♻️ RESTART]" if restarted_2 else ""
+                if restarted_2:
+                    log_suffix_2 += " [♻️ RESTART]"
                 log_line_2 = format_bet_log_func(
                     action="RES",
                     status_icon="✅" if round_margin_2 > 0 else "❌",
@@ -2508,7 +2677,7 @@ async def process_betting_round(
                     result=actual_dice_representation,
                     profit=f"{round_margin_2:+.0f}р",
                     roi=f"{(betting_state_2.get('total_profit', 0) / betting_state_2.get('total_bet_amount', 1) * 100) if betting_state_2.get('total_bet_amount', 0) > 0 else 0:.2f}%",
-                    balance=f"{betting_state_2.get('session_balance', 0):.0f}р",
+                    balance=f"{balance_for_log_2:.0f}р",
                     real_balance=get_balance_for_log_func(),
                     bets_count=str(resolved_round_number_2).zfill(3),
                 )
@@ -2522,6 +2691,26 @@ async def process_betting_round(
                     conn_2.close()
                 except Exception:
                     pass
+
+    pending_win_confirmation_status = _finalize_pending_win_confirmation_if_ready(
+        betting_state=betting_state,
+        get_db_connection_func=get_db_connection_func,
+        update_runtime_snapshot_func=update_runtime_snapshot_func,
+        slot_label="1",
+    )
+    pending_win_confirmation_status_2 = "none"
+    if betting_state_2 is not None:
+        pending_win_confirmation_status_2 = _finalize_pending_win_confirmation_if_ready(
+            betting_state=betting_state_2,
+            get_db_connection_func=get_db_connection_func,
+            update_runtime_snapshot_func=update_runtime_snapshot_func,
+            slot_label="2",
+        )
+
+    if pending_win_confirmation_status == "pending" or pending_win_confirmation_status_2 == "pending":
+        if bet_debug_enabled:
+            print("[DEBUG PROCESS] Ждём подтверждения выигрыша по accounting, новый SET пропущен.", flush=True)
+        return
 
     slot2_configured_tokens = set(runtime_context.get_configured_target_tokens_2())
     if bet_debug_enabled:

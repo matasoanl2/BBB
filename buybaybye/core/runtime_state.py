@@ -91,6 +91,7 @@ class RuntimeBettingState:
     reported_20_rounds: list[int] = field(default_factory=list)
     recent_bets: list[dict[str, Any]] = field(default_factory=list)
     pending_bets: list[dict[str, Any]] = field(default_factory=list)
+    pending_win_confirmation: dict[str, Any] | None = None
     dynamic_outcome: str = "red"
     dynamic_specifier: str = "5"
     dynamic_targets: list[str] = field(default_factory=list)
