@@ -116,6 +116,7 @@ class BettingConfig:
     bet_delay_max: float
     debug_enabled: bool
     post_log_enabled: bool
+    combine_slots_in_single_post: bool
     # Вторичный слот ставок (STRATEGY_2 / BASE_BET_2 / BET_TARGETS_2)
     strategy_name_2: str = ""
     base_bet_2: float = 0.0
@@ -341,6 +342,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             bet_delay_max=float(os.getenv("BET_DELAY_MAX", "1.5")),
             debug_enabled=_env_bool("BET_DEBUG_ENABLED"),
             post_log_enabled=_env_bool("BET_POST_LOG_ENABLED"),
+            combine_slots_in_single_post=_env_bool("BET_COMBINE_SLOTS_IN_SINGLE_POST", "false"),
             strategy_name_2=raw_strategy_name_2,
             base_bet_2=raw_base_bet_2,
             configured_targets_2=configured_targets_2,

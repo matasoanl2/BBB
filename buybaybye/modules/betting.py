@@ -1221,6 +1221,555 @@ async def place_bet(
     )
 
 
+async def place_bets_combined_slots(
+    page,
+    *,
+    slot1_targets: tuple[BetTarget, ...],
+    slot1_amount: float,
+    slot2_targets: tuple[BetTarget, ...],
+    slot2_amount: float,
+    allow_refresh_retry: bool = True,
+    runtime_context: RuntimeContext,
+    runtime_config: RuntimeConfig,
+    get_jwt_token_func,
+    validate_base_bet_func,
+    calculate_roi_func,
+    calculate_roi_2_func,
+    format_outcome_pretty_func,
+    format_bet_log_func,
+    get_balance_for_log_func,
+    get_db_connection_func,
+    is_forbidden_access_error_func,
+    reload_page_and_refresh_token_func,
+    advance_step_after_set_error_func,
+    advance_step_2_after_set_error_func,
+    update_runtime_snapshot_func,
+    queue_telegram_notification_func,
+) -> bool:
+    betting_state_1 = runtime_context.betting_state
+    betting_state_2 = runtime_context.betting_state_2
+    strategy_1 = runtime_context.current_strategy or {}
+    strategy_2 = runtime_context.current_strategy_2 or {}
+    betting_config = runtime_config.betting
+    telegram_config = runtime_config.telegram
+
+    if betting_state_1 is None or betting_state_2 is None:
+        return False
+    if not slot1_targets or not slot2_targets:
+        return False
+
+    jwt_token = runtime_context.jwt_token
+    if not jwt_token:
+        print("[WARNING] JWT токен ещё не найден! Комбинированная ставка НЕ будет размещена.", flush=True)
+        advance_step_after_set_error_func()
+        advance_step_2_after_set_error_func()
+        return False
+
+    if not validate_base_bet_func(slot1_amount):
+        print(f"[ERROR] Ставка slot1 {slot1_amount}р ДОЛЖНА делиться на 10 нацело!", flush=True)
+        advance_step_after_set_error_func()
+        return False
+
+    if not validate_base_bet_func(slot2_amount):
+        print(f"[ERROR] Ставка slot2 {slot2_amount}р ДОЛЖНА делиться на 10 нацело!", flush=True)
+        advance_step_2_after_set_error_func()
+        return False
+
+    delay = random.uniform(betting_config.bet_delay_min, betting_config.bet_delay_max)
+    await asyncio.sleep(delay)
+
+    slot1_total_amount = slot1_amount * len(slot1_targets)
+    slot2_total_amount = slot2_amount * len(slot2_targets)
+    slot1_step_for_history = betting_state_1.get("current_step", 0)
+    slot2_step_for_history = betting_state_2.get("current_step", 0)
+    slot1_max_steps = len(strategy_1.get("coefficients", [1])) if strategy_1 else 15
+    slot2_max_steps = len(strategy_2.get("coefficients", [1])) if strategy_2 else 15
+    slot1_round_number = int(betting_state_1.get("total_bet_rounds", 0) or 0) + 1
+    slot2_round_number = int(betting_state_2.get("total_bet_rounds", 0) or 0) + 1
+    slot1_round_display = str(slot1_round_number).zfill(3)
+    slot2_round_display = str(slot2_round_number).zfill(3)
+
+    slot1_tokens = [target.token for target in slot1_targets]
+    slot2_tokens = [target.token for target in slot2_targets]
+    slot1_display = "[1]" + _format_bet_targets_pretty(slot1_targets, format_outcome_pretty_func)
+    slot2_display = "[2]" + _format_bet_targets_pretty(slot2_targets, format_outcome_pretty_func)
+
+    payload = {
+        "bets": [
+            *[_build_bet_payload(target, slot1_amount) for target in slot1_targets],
+            *[_build_bet_payload(target, slot2_amount) for target in slot2_targets],
+        ]
+    }
+    payload_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+    headers = {
+        "Content-Type": "application/json",
+        "Referer": "https://betboom.ru/game/nardsgame",
+        "Origin": "https://betboom.ru",
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    if jwt_token:
+        headers["X-Access-Token"] = jwt_token
+
+    if betting_config.post_log_enabled:
+        request_message = (
+            "[POST-SET][REQ] "
+            f"url={runtime_config.browser.bet_api_url} "
+            "slot=1+2 "
+            f"round={slot1_round_display}+{slot2_round_display} "
+            f"targets_1={slot1_tokens} amount_per_target_1={slot1_amount:.0f} total_amount_1={slot1_total_amount:.0f} "
+            f"targets_2={slot2_tokens} amount_per_target_2={slot2_amount:.0f} total_amount_2={slot2_total_amount:.0f} "
+            f"payload={payload_text}"
+        )
+        _print_bet_system_log(
+            runtime_config=runtime_config,
+            event="bet_post_request_combined",
+            level="info",
+            message=request_message,
+            extra={
+                "url": runtime_config.browser.bet_api_url,
+                "slot": "1+2",
+                "round_1": slot1_round_display,
+                "round_2": slot2_round_display,
+                "target_tokens_1": slot1_tokens,
+                "target_tokens_2": slot2_tokens,
+                "amount_per_target_1": slot1_amount,
+                "amount_per_target_2": slot2_amount,
+                "total_amount_1": slot1_total_amount,
+                "total_amount_2": slot2_total_amount,
+                "payload": payload,
+            },
+        )
+
+    try:
+        response = await page.request.post(runtime_config.browser.bet_api_url, data=json.dumps(payload), headers=headers)
+        status_code = response.status
+        response_text = await response.text()
+        response_text_preview = response_text
+        if len(response_text_preview) > 800:
+            response_text_preview = response_text_preview[:800] + "...(truncated)"
+
+        try:
+            response_json = json.loads(response_text)
+            if isinstance(response_json, dict) and "code" in response_json:
+                status_code = response_json["code"]
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        if betting_config.post_log_enabled:
+            response_message = (
+                "[POST-SET][RES] "
+                f"url={runtime_config.browser.bet_api_url} "
+                "slot=1+2 "
+                f"round={slot1_round_display}+{slot2_round_display} "
+                f"status={status_code} "
+                f"body={response_text_preview}"
+            )
+            _print_bet_system_log(
+                runtime_config=runtime_config,
+                event="bet_post_response_combined",
+                level="info",
+                message=response_message,
+                extra={
+                    "url": runtime_config.browser.bet_api_url,
+                    "slot": "1+2",
+                    "round_1": slot1_round_display,
+                    "round_2": slot2_round_display,
+                    "status": status_code,
+                    "body_preview": response_text_preview,
+                    "body_truncated": len(response_text) > 800,
+                },
+            )
+
+        conn = get_db_connection_func()
+        cursor = conn.cursor()
+        try:
+            should_refresh_token = is_forbidden_access_error_func(status_code, response_text)
+            is_insufficient_balance = _is_insufficient_balance_response(status_code, response_text)
+
+            if status_code == 200:
+                previous_total_bets_1 = betting_state_1.get("total_bets_placed", 0)
+                previous_total_bets_2 = betting_state_2.get("total_bets_placed", 0)
+
+                betting_state_1["total_bet_amount"] += slot1_total_amount
+                betting_state_1["total_bets_placed"] = previous_total_bets_1 + len(slot1_targets)
+                betting_state_1["total_bet_rounds"] = slot1_round_number
+                betting_state_1["last_bet_round_number"] = slot1_round_number
+                betting_state_1["pending_expected_bet_drop"] = float(betting_state_1.get("pending_expected_bet_drop", 0.0) or 0.0) + slot1_total_amount
+                betting_state_1["reconciliation_phase"] = "awaiting_bet_drop"
+                betting_state_1["last_bet_amount"] = slot1_total_amount
+                betting_state_1["last_set_amount"] = slot1_total_amount
+                betting_state_1["last_set_status"] = "pending"
+                betting_state_1["last_set_error"] = None
+
+                betting_state_2["total_bet_amount"] += slot2_total_amount
+                betting_state_2["total_bets_placed"] = previous_total_bets_2 + len(slot2_targets)
+                betting_state_2["total_bet_rounds"] = slot2_round_number
+                betting_state_2["last_bet_round_number"] = slot2_round_number
+                betting_state_2["pending_expected_bet_drop"] = float(betting_state_2.get("pending_expected_bet_drop", 0.0) or 0.0) + slot2_total_amount
+                betting_state_2["reconciliation_phase"] = "awaiting_bet_drop"
+                betting_state_2["last_bet_amount"] = slot2_total_amount
+                betting_state_2["last_set_amount"] = slot2_total_amount
+                betting_state_2["last_set_status"] = "pending"
+                betting_state_2["last_set_error"] = None
+
+                pending_bets_1 = []
+                for target in slot1_targets:
+                    cursor.execute(
+                        """
+                        INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status, slot)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            datetime.now(timezone.utc),
+                            target.outcome,
+                            target.specifier,
+                            slot1_amount,
+                            betting_config.strategy_name,
+                            slot1_step_for_history,
+                            "pending",
+                            1,
+                        ),
+                    )
+                    history_id_row = cursor.fetchone()
+                    history_id = history_id_row[0] if history_id_row else None
+                    pending_bets_1.append(
+                        {
+                            "history_id": history_id,
+                            "outcome": target.outcome,
+                            "specifier": target.specifier,
+                            "amount": slot1_amount,
+                            "bet_step": slot1_step_for_history,
+                            "token": target.token,
+                            "round_number": slot1_round_number,
+                        }
+                    )
+                betting_state_1["pending_bets"] = pending_bets_1
+
+                pending_bets_2 = []
+                for target in slot2_targets:
+                    cursor.execute(
+                        """
+                        INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status, slot)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING id
+                        """,
+                        (
+                            datetime.now(timezone.utc),
+                            target.outcome,
+                            target.specifier,
+                            slot2_amount,
+                            betting_config.strategy_name_2,
+                            slot2_step_for_history,
+                            "pending",
+                            2,
+                        ),
+                    )
+                    history_id_row = cursor.fetchone()
+                    history_id = history_id_row[0] if history_id_row else None
+                    pending_bets_2.append(
+                        {
+                            "history_id": history_id,
+                            "outcome": target.outcome,
+                            "specifier": target.specifier,
+                            "amount": slot2_amount,
+                            "bet_step": slot2_step_for_history,
+                            "token": target.token,
+                            "round_number": slot2_round_number,
+                        }
+                    )
+                betting_state_2["pending_bets"] = pending_bets_2
+
+                payout_coeff_1 = strategy_1.get("payout_coefficient", 5.7)
+                payout_coeff_2 = strategy_2.get("payout_coefficient", 5.7)
+                potential_margin_1 = ((slot1_amount * payout_coeff_1) - slot1_amount) * len(slot1_targets)
+                potential_margin_2 = ((slot2_amount * payout_coeff_2) - slot2_amount) * len(slot2_targets)
+
+                log_line_1 = format_bet_log_func(
+                    action="SET",
+                    status_icon="✅",
+                    outcome=slot1_display,
+                    amount=f"{slot1_total_amount:.0f}р",
+                    step=f"{slot1_step_for_history+1}/{slot1_max_steps}",
+                    result="------",
+                    profit=f"+{potential_margin_1:.0f}р",
+                    roi=f"{calculate_roi_func():.2f}%",
+                    balance=f"{betting_state_1.get('session_balance', 0):.0f}р",
+                    real_balance=get_balance_for_log_func(),
+                    bets_count=slot1_round_display,
+                )
+                print(log_line_1, flush=True)
+
+                log_line_2 = format_bet_log_func(
+                    action="SET",
+                    status_icon="✅",
+                    outcome=slot2_display,
+                    amount=f"{slot2_total_amount:.0f}р",
+                    step=f"{slot2_step_for_history+1}/{slot2_max_steps}",
+                    result="------",
+                    profit=f"+{potential_margin_2:.0f}р",
+                    roi=f"{calculate_roi_2_func():.2f}%",
+                    balance=f"{betting_state_2.get('session_balance', 0):.0f}р",
+                    real_balance=get_balance_for_log_func(),
+                    bets_count=slot2_round_display,
+                )
+                print(log_line_2, flush=True)
+
+                conn.commit()
+                update_runtime_snapshot_func(
+                    "bet_set_combined",
+                    {
+                        "combined_post": True,
+                        "http_status": status_code,
+                        "last_set_status_1": betting_state_1.get("last_set_status"),
+                        "last_set_status_2": betting_state_2.get("last_set_status"),
+                        "pending_bets_count_1": len(betting_state_1.get("pending_bets", [])),
+                        "pending_bets_count_2": len(betting_state_2.get("pending_bets", [])),
+                        "targets_1": slot1_tokens,
+                        "targets_2": slot2_tokens,
+                    },
+                )
+                return True
+
+            betting_state_1["pending_bets"] = []
+            betting_state_2["pending_bets"] = []
+            betting_state_1["last_bet_amount"] = 0.0
+            betting_state_2["last_bet_amount"] = 0.0
+            betting_state_1["last_set_amount"] = slot1_total_amount
+            betting_state_2["last_set_amount"] = slot2_total_amount
+            betting_state_1["last_set_status"] = "forbidden_refresh" if should_refresh_token else "error"
+            betting_state_2["last_set_status"] = "forbidden_refresh" if should_refresh_token else "error"
+            betting_state_1["last_set_error"] = response_text[:100] if response_text else "Unknown error"
+            betting_state_2["last_set_error"] = response_text[:100] if response_text else "Unknown error"
+
+            if should_refresh_token and allow_refresh_retry:
+                token_refreshed = await reload_page_and_refresh_token_func(page)
+                if token_refreshed:
+                    betting_state_1["last_set_status"] = "retry_after_refresh"
+                    betting_state_2["last_set_status"] = "retry_after_refresh"
+                    betting_state_1["last_set_error"] = None
+                    betting_state_2["last_set_error"] = None
+                    conn.close()
+                    runtime_context.jwt_token = get_jwt_token_func()
+                    return await place_bets_combined_slots(
+                        page,
+                        slot1_targets=slot1_targets,
+                        slot1_amount=slot1_amount,
+                        slot2_targets=slot2_targets,
+                        slot2_amount=slot2_amount,
+                        allow_refresh_retry=False,
+                        runtime_context=runtime_context,
+                        runtime_config=runtime_config,
+                        get_jwt_token_func=get_jwt_token_func,
+                        validate_base_bet_func=validate_base_bet_func,
+                        calculate_roi_func=calculate_roi_func,
+                        calculate_roi_2_func=calculate_roi_2_func,
+                        format_outcome_pretty_func=format_outcome_pretty_func,
+                        format_bet_log_func=format_bet_log_func,
+                        get_balance_for_log_func=get_balance_for_log_func,
+                        get_db_connection_func=get_db_connection_func,
+                        is_forbidden_access_error_func=is_forbidden_access_error_func,
+                        reload_page_and_refresh_token_func=reload_page_and_refresh_token_func,
+                        advance_step_after_set_error_func=advance_step_after_set_error_func,
+                        advance_step_2_after_set_error_func=advance_step_2_after_set_error_func,
+                        update_runtime_snapshot_func=update_runtime_snapshot_func,
+                        queue_telegram_notification_func=queue_telegram_notification_func,
+                    )
+
+            if is_insufficient_balance:
+                betting_state_1["low_balance_api_fail_at"] = datetime.now(timezone.utc).isoformat()
+                betting_state_2["low_balance_api_fail_at"] = datetime.now(timezone.utc).isoformat()
+                _set_low_balance_pause_state(
+                    betting_state_1,
+                    amount=slot1_amount,
+                    bet_targets=slot1_targets,
+                    reason="api_insufficient_balance",
+                )
+                _set_low_balance_pause_state(
+                    betting_state_2,
+                    amount=slot2_amount,
+                    bet_targets=slot2_targets,
+                    reason="api_insufficient_balance",
+                )
+                betting_state_1["last_set_status"] = "paused_low_balance"
+                betting_state_2["last_set_status"] = "paused_low_balance"
+            else:
+                advance_step_after_set_error_func()
+                advance_step_2_after_set_error_func()
+
+                for target in slot1_targets:
+                    cursor.execute(
+                        """
+                        INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status, slot)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            datetime.now(timezone.utc),
+                            target.outcome,
+                            target.specifier,
+                            slot1_amount,
+                            betting_config.strategy_name,
+                            slot1_step_for_history,
+                            "error",
+                            1,
+                        ),
+                    )
+
+                for target in slot2_targets:
+                    cursor.execute(
+                        """
+                        INSERT INTO bet_history (timestamp, outcome, specifier, amount, strategy, bet_step, status, slot)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            datetime.now(timezone.utc),
+                            target.outcome,
+                            target.specifier,
+                            slot2_amount,
+                            betting_config.strategy_name_2,
+                            slot2_step_for_history,
+                            "error",
+                            2,
+                        ),
+                    )
+
+            slot1_result = "PAUSE" if is_insufficient_balance else "ERROR"
+            slot2_result = "PAUSE" if is_insufficient_balance else "ERROR"
+            slot1_error = response_text[:100] if response_text else "Unknown error"
+            slot2_error = response_text[:100] if response_text else "Unknown error"
+
+            print(
+                format_bet_log_func(
+                    action="SET",
+                    status_icon="❌",
+                    outcome=slot1_display,
+                    amount=f"{slot1_total_amount:.0f}р",
+                    step=f"{slot1_step_for_history+1}/{slot1_max_steps}",
+                    result=slot1_result,
+                    profit="-",
+                    roi=f"{calculate_roi_func():.2f}%",
+                    balance=f"{betting_state_1.get('session_balance', 0):.0f}р",
+                    real_balance=get_balance_for_log_func(),
+                    error_msg=slot1_error,
+                    bets_count=slot1_round_display,
+                ),
+                flush=True,
+            )
+            print(
+                format_bet_log_func(
+                    action="SET",
+                    status_icon="❌",
+                    outcome=slot2_display,
+                    amount=f"{slot2_total_amount:.0f}р",
+                    step=f"{slot2_step_for_history+1}/{slot2_max_steps}",
+                    result=slot2_result,
+                    profit="-",
+                    roi=f"{calculate_roi_2_func():.2f}%",
+                    balance=f"{betting_state_2.get('session_balance', 0):.0f}р",
+                    real_balance=get_balance_for_log_func(),
+                    error_msg=slot2_error,
+                    bets_count=slot2_round_display,
+                ),
+                flush=True,
+            )
+
+            conn.commit()
+            update_runtime_snapshot_func(
+                "bet_set_combined_error",
+                {
+                    "combined_post": True,
+                    "http_status": status_code,
+                    "last_set_status_1": betting_state_1.get("last_set_status"),
+                    "last_set_status_2": betting_state_2.get("last_set_status"),
+                    "last_set_error_1": betting_state_1.get("last_set_error"),
+                    "last_set_error_2": betting_state_2.get("last_set_error"),
+                    "targets_1": slot1_tokens,
+                    "targets_2": slot2_tokens,
+                },
+            )
+            return False
+        finally:
+            try:
+                cursor.close()
+                conn.close()
+            except Exception:
+                pass
+
+    except Exception as exc:
+        betting_state_1["pending_bets"] = []
+        betting_state_2["pending_bets"] = []
+        betting_state_1["last_bet_amount"] = 0.0
+        betting_state_2["last_bet_amount"] = 0.0
+        betting_state_1["last_set_status"] = "request_error"
+        betting_state_2["last_set_status"] = "request_error"
+        betting_state_1["last_set_error"] = str(exc)[:100]
+        betting_state_2["last_set_error"] = str(exc)[:100]
+
+        print(
+            format_bet_log_func(
+                action="SET",
+                status_icon="❌",
+                outcome=slot1_display,
+                amount=f"{slot1_total_amount:.0f}р",
+                step="-",
+                result="ERROR",
+                profit="-",
+                roi=f"{calculate_roi_func():.2f}%",
+                balance=f"{betting_state_1.get('session_balance', 0):.0f}р",
+                real_balance=get_balance_for_log_func(),
+                error_msg=str(exc)[:100],
+                bets_count=slot1_round_display,
+            ),
+            flush=True,
+        )
+        print(
+            format_bet_log_func(
+                action="SET",
+                status_icon="❌",
+                outcome=slot2_display,
+                amount=f"{slot2_total_amount:.0f}р",
+                step="-",
+                result="ERROR",
+                profit="-",
+                roi=f"{calculate_roi_2_func():.2f}%",
+                balance=f"{betting_state_2.get('session_balance', 0):.0f}р",
+                real_balance=get_balance_for_log_func(),
+                error_msg=str(exc)[:100],
+                bets_count=slot2_round_display,
+            ),
+            flush=True,
+        )
+
+        queue_telegram_notification_func(
+            "[BuyBayBye] Ошибка объединенного запроса ставки",
+            (
+                "Комбинированный POST для slot1+slot2 завершился ошибкой.\n"
+                f"slot1: {slot1_display}, сумма: {slot1_total_amount:.0f}р\n"
+                f"slot2: {slot2_display}, сумма: {slot2_total_amount:.0f}р\n"
+                f"Ошибка: {str(exc)[:300]}"
+            ),
+            dedup_key="bet_request_error_combined",
+            enabled=telegram_config.notify_bet_errors,
+        )
+
+        advance_step_after_set_error_func()
+        advance_step_2_after_set_error_func()
+        update_runtime_snapshot_func(
+            "bet_set_combined_request_error",
+            {
+                "combined_post": True,
+                "last_set_status_1": betting_state_1.get("last_set_status"),
+                "last_set_status_2": betting_state_2.get("last_set_status"),
+                "last_set_error_1": betting_state_1.get("last_set_error"),
+                "last_set_error_2": betting_state_2.get("last_set_error"),
+                "targets_1": slot1_tokens,
+                "targets_2": slot2_tokens,
+            },
+        )
+        return False
+
+
 async def process_betting_round(
     page,
     payload: object,
@@ -1243,6 +1792,7 @@ async def process_betting_round(
     calculate_bet_amount_func,
     place_bet_func,
     place_bets_func,
+    place_bets_combined_slots_func=None,
     calculate_bet_amount_2_func=None,
     place_bets_2_func=None,
 ) -> None:
@@ -1567,8 +2117,10 @@ async def process_betting_round(
             f"[DEBUG PROCESS_BET] Вызов place_bets для {[target.token for target in bet_targets_to_place]} по {bet_amount:.0f}р на цель",
             flush=True,
         )
-    await place_bets_func(page, bet_targets_to_place, bet_amount)
-    # Второй слот: размещение ставок
+    slot2_targets_to_place: tuple[BetTarget, ...] = ()
+    slot2_amount = 0.0
+
+    # Второй слот: подготовка целей/суммы для размещения ставок
     if place_bets_2_func is not None and calculate_bet_amount_2_func is not None:
         slot1_target_tokens = {target.token for target in bet_targets_to_place}
         slot2_targets = runtime_context.get_configured_bet_targets_2()
@@ -1598,15 +2150,46 @@ async def process_betting_round(
 
         slot2_targets = tuple(target for target in slot2_targets if target.token not in slot1_target_tokens)
         if slot2_targets:
+            slot2_targets_to_place = slot2_targets
             slot2_amount = calculate_bet_amount_2_func()
-            if bet_debug_enabled:
-                print(
-                    f"[DEBUG PROCESS_BET-2] Вызов place_bets_2 для {[t.token for t in slot2_targets]} по {slot2_amount:.0f}р",
-                    flush=True,
-                )
-            await place_bets_2_func(page, slot2_targets, slot2_amount)
         else:
             print(
                 "[WARNING][2] Все цели второго слота пересекаются с целями слота 1 в текущем раунде; слот 2 пропущен.",
                 flush=True,
             )
+
+    combine_slots_in_single_post = bool(getattr(runtime_config.betting, "combine_slots_in_single_post", False))
+    can_use_combined_post = (
+        combine_slots_in_single_post
+        and place_bets_combined_slots_func is not None
+        and bool(bet_targets_to_place)
+        and bool(slot2_targets_to_place)
+    )
+
+    if can_use_combined_post:
+        if bet_debug_enabled:
+            print(
+                (
+                    "[DEBUG PROCESS_BET-COMBINED] Вызов combined POST: "
+                    f"slot1={[target.token for target in bet_targets_to_place]} ({bet_amount:.0f}р), "
+                    f"slot2={[t.token for t in slot2_targets_to_place]} ({slot2_amount:.0f}р)"
+                ),
+                flush=True,
+            )
+        await place_bets_combined_slots_func(
+            page,
+            slot1_targets=bet_targets_to_place,
+            slot1_amount=bet_amount,
+            slot2_targets=slot2_targets_to_place,
+            slot2_amount=slot2_amount,
+        )
+        return
+
+    await place_bets_func(page, bet_targets_to_place, bet_amount)
+    if slot2_targets_to_place:
+        if bet_debug_enabled:
+            print(
+                f"[DEBUG PROCESS_BET-2] Вызов place_bets_2 для {[t.token for t in slot2_targets_to_place]} по {slot2_amount:.0f}р",
+                flush=True,
+            )
+        await place_bets_2_func(page, slot2_targets_to_place, slot2_amount)
