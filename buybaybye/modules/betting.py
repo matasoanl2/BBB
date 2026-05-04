@@ -2707,6 +2707,85 @@ async def process_betting_round(
         slot1_ready_for_combined = bool(bet_targets_to_place)
         slot2_ready_for_combined = bool(slot2_targets_to_place)
 
+    # Общий precheck по shared balance: если на оба слота не хватает,
+    # размещаем только один слот (предпочтение slot1) и явно логируем пропуск второго.
+    shared_balance_for_slots = _normalize_account_balance((runtime_context.betting_state or {}).get("account_balance"))
+    if shared_balance_for_slots is not None and bet_targets_to_place and slot2_targets_to_place:
+        slot1_total_amount = float(bet_amount) * float(len(bet_targets_to_place))
+        slot2_total_amount = float(slot2_amount) * float(len(slot2_targets_to_place))
+        combined_total_amount = slot1_total_amount + slot2_total_amount
+
+        if combined_total_amount > shared_balance_for_slots + 1e-9:
+            slot1_affordable = slot1_total_amount <= shared_balance_for_slots + 1e-9
+            slot2_affordable = slot2_total_amount <= shared_balance_for_slots + 1e-9
+
+            skipped_slot = ""
+            keep_slot = ""
+            skipped_required_total = 0.0
+
+            if slot1_affordable and not slot2_affordable:
+                slot2_targets_to_place = ()
+                slot2_amount = 0.0
+                skipped_slot = "2"
+                keep_slot = "1"
+                skipped_required_total = slot2_total_amount
+            elif slot2_affordable and not slot1_affordable:
+                bet_targets_to_place = ()
+                bet_amount = 0.0
+                skipped_slot = "1"
+                keep_slot = "2"
+                skipped_required_total = slot1_total_amount
+            elif slot1_affordable and slot2_affordable:
+                # Оба слота по отдельности помещаются, но суммарно нет — приоритет за slot1.
+                slot2_targets_to_place = ()
+                slot2_amount = 0.0
+                skipped_slot = "2"
+                keep_slot = "1"
+                skipped_required_total = slot2_total_amount
+            else:
+                # Ни один слот отдельно не помещается в текущий shared balance.
+                bet_targets_to_place = ()
+                slot2_targets_to_place = ()
+                bet_amount = 0.0
+                slot2_amount = 0.0
+                skipped_slot = "1+2"
+                keep_slot = "none"
+                skipped_required_total = min(slot1_total_amount, slot2_total_amount)
+
+            _print_bet_system_log(
+                runtime_config=runtime_config,
+                event="set_skip_slot_shared_balance_limit",
+                level="info",
+                message=(
+                    "[SET-CHECK] Недостаточно shared balance для двух слотов; "
+                    f"пропускаем slot={skipped_slot}, размещаем slot={keep_slot}."
+                ),
+                extra={
+                    "account_balance": shared_balance_for_slots,
+                    "combined_required_total": combined_total_amount,
+                    "slot1_required_total": slot1_total_amount,
+                    "slot2_required_total": slot2_total_amount,
+                    "skipped_slot": skipped_slot,
+                    "kept_slot": keep_slot,
+                    "skipped_required_total": skipped_required_total,
+                },
+            )
+
+            if bet_debug_enabled:
+                print(
+                    (
+                        "[DEBUG SHARED-BALANCE] "
+                        f"balance={shared_balance_for_slots:.0f}р, "
+                        f"slot1_total={slot1_total_amount:.0f}р, "
+                        f"slot2_total={slot2_total_amount:.0f}р, "
+                        f"kept={keep_slot}, skipped={skipped_slot}"
+                    ),
+                    flush=True,
+                )
+
+    slot1_ready_for_combined = bool(bet_targets_to_place)
+    slot2_ready_for_combined = bool(slot2_targets_to_place)
+
     can_use_combined_post = (
         combine_slots_in_single_post
         and place_bets_combined_slots_func is not None
