@@ -208,6 +208,27 @@ def _normalize_account_balance(raw_balance) -> float | None:
         return None
 
 
+def _parse_iso_datetime(raw_value: object) -> datetime | None:
+    if not isinstance(raw_value, str) or not raw_value:
+        return None
+    try:
+        return datetime.fromisoformat(raw_value)
+    except ValueError:
+        return None
+
+
+def _has_fresh_accounting_update_after_api_fail(betting_state: dict) -> bool:
+    api_fail_at = _parse_iso_datetime(betting_state.get("low_balance_api_fail_at"))
+    if api_fail_at is None:
+        return False
+
+    account_balance_updated_at = _parse_iso_datetime(betting_state.get("account_balance_updated_at"))
+    if account_balance_updated_at is None:
+        return False
+
+    return account_balance_updated_at > api_fail_at
+
+
 def _clear_low_balance_pause_state(betting_state: dict) -> None:
     betting_state["low_balance_pause_active"] = False
     betting_state["low_balance_pause_required_balance"] = 0.0
@@ -696,16 +717,10 @@ def _run_set_precheck_for_slot(
 
     if was_low_balance_paused:
         _api_fail_pause_reason = str(betting_state.get("low_balance_pause_reason") or "")
-        if _api_fail_pause_reason == "api_insufficient_balance":
-            _api_fail_at_raw = betting_state.get("low_balance_api_fail_at")
-            if _api_fail_at_raw:
-                try:
-                    _api_fail_at = datetime.fromisoformat(_api_fail_at_raw)
-                    _elapsed = (datetime.now(timezone.utc) - _api_fail_at).total_seconds()
-                    if _elapsed < 10:
-                        return False, (), amount
-                except ValueError:
-                    pass
+        if _api_fail_pause_reason == "api_insufficient_balance" and not _has_fresh_accounting_update_after_api_fail(
+            betting_state
+        ):
+            return False, (), amount
         _clear_low_balance_pause_state(betting_state)
         betting_state["current_step"] = 0
         betting_state["consecutive_losses"] = 0
@@ -1146,16 +1161,10 @@ async def place_bets(
 
             if was_low_balance_paused:
                 _api_fail_pause_reason = str(betting_state.get("low_balance_pause_reason") or "")
-                if _api_fail_pause_reason == "api_insufficient_balance":
-                    _api_fail_at_raw = betting_state.get("low_balance_api_fail_at")
-                    if _api_fail_at_raw:
-                        try:
-                            _api_fail_at = datetime.fromisoformat(_api_fail_at_raw)
-                            _elapsed = (datetime.now(timezone.utc) - _api_fail_at).total_seconds()
-                            if _elapsed < 10:
-                                return False
-                        except ValueError:
-                            pass
+                if _api_fail_pause_reason == "api_insufficient_balance" and not _has_fresh_accounting_update_after_api_fail(
+                    betting_state
+                ):
+                    return False
                 _clear_low_balance_pause_state(betting_state)
                 betting_state["current_step"] = 0
                 betting_state["consecutive_losses"] = 0
@@ -2637,6 +2646,9 @@ async def process_betting_round(
         shared_account_balance = _normalize_account_balance((runtime_context.betting_state or {}).get("account_balance"))
         if shared_account_balance is not None and runtime_context.betting_state_2 is not None:
             runtime_context.betting_state_2["account_balance"] = shared_account_balance
+            runtime_context.betting_state_2["account_balance_updated_at"] = (runtime_context.betting_state or {}).get(
+                "account_balance_updated_at"
+            )
 
         slot1_step_for_history = int((runtime_context.betting_state or {}).get("current_step", 0) or 0)
         slot2_step_for_history = int((runtime_context.betting_state_2 or {}).get("current_step", 0) or 0)
