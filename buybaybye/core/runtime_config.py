@@ -79,6 +79,10 @@ class BrowserConfig:
     bet_api_url: str
     headless: bool
     block_video_stream: bool
+    block_images: bool
+    block_fonts: bool
+    disable_gpu: bool
+    renderer_process_limit: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +321,10 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             bet_api_url="https://game.betboom.ru/api/nards_studio_client/v1/bet",
             headless=_env_bool("HEADLESS"),
             block_video_stream=_env_bool("BROWSER_BLOCK_VIDEO_STREAM", "false"),
+            block_images=_env_bool("BROWSER_BLOCK_IMAGES", "false"),
+            block_fonts=_env_bool("BROWSER_BLOCK_FONTS", "false"),
+            disable_gpu=_env_bool("BROWSER_DISABLE_GPU", "true"),
+            renderer_process_limit=max(1, int(os.getenv("BROWSER_RENDERER_PROCESS_LIMIT", "2"))),
         ),
         database=DatabaseConfig(
             user=os.getenv("DB_USER", "postgres"),

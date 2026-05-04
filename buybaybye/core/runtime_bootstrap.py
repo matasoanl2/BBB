@@ -76,10 +76,10 @@ def print_strategy_startup_info(
         print(f"[DYNAMIC] Начальная ставка: {initial_bet_targets}", flush=True)
 
 
-def get_browser_launch_args() -> list[str]:
+def get_browser_launch_args(*, runtime_config: RuntimeConfig | None = None) -> list[str]:
     """Вернуть набор Chromium-аргументов для запуска рабочего браузерного профиля."""
 
-    return [
+    args = [
         "--disable-blink-features=AutomationControlled",
         "--no-sandbox",
         "--disable-dev-shm-usage",
@@ -100,6 +100,20 @@ def get_browser_launch_args() -> list[str]:
         "--password-store=basic",
         "--autoplay-policy=no-user-gesture-required",
     ]
+
+    if runtime_config is None:
+        return args
+
+    browser_config = runtime_config.browser
+    if browser_config.disable_gpu:
+        args.extend([
+            "--disable-gpu",
+            "--disable-software-rasterizer",
+        ])
+
+    args.append(f"--renderer-process-limit={browser_config.renderer_process_limit}")
+    args.append("--disable-features=MediaRouter,OptimizationHints,Translate,AutofillServerCommunication")
+    return args
 
 
 def build_runtime_status_line(

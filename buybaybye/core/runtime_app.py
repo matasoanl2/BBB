@@ -134,30 +134,57 @@ class RuntimeApp:
             context = await playwright.chromium.launch_persistent_context(
                 user_data_dir=str(self.runtime_config.browser.session_dir),
                 headless=self.runtime_config.browser.headless,
-                args=get_browser_launch_args(),
+                args=get_browser_launch_args(runtime_config=self.runtime_config),
             )
         else:
             browser = await playwright.chromium.launch(
                 headless=self.runtime_config.browser.headless,
-                args=get_browser_launch_args(),
+                args=get_browser_launch_args(runtime_config=self.runtime_config),
             )
             context = await browser.new_context()
 
-        if self.runtime_config.browser.block_video_stream:
+        if (
+            self.runtime_config.browser.block_video_stream
+            or self.runtime_config.browser.block_images
+            or self.runtime_config.browser.block_fonts
+        ):
             blocked_video_url_parts = (".m3u8", ".mp4", ".webm", ".m4s", ".ts")
+            blocked_image_url_parts = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg")
+            blocked_font_url_parts = (".woff", ".woff2", ".ttf", ".otf")
 
             async def _block_video_stream(route) -> None:
                 request = route.request
                 request_url = request.url.lower()
+                resource_type = request.resource_type
 
-                if request.resource_type == "media" or any(part in request_url for part in blocked_video_url_parts):
+                if self.runtime_config.browser.block_video_stream and (
+                    resource_type == "media" or any(part in request_url for part in blocked_video_url_parts)
+                ):
+                    await route.abort()
+                    return
+
+                if self.runtime_config.browser.block_images and (
+                    resource_type == "image" or any(part in request_url for part in blocked_image_url_parts)
+                ):
+                    await route.abort()
+                    return
+
+                if self.runtime_config.browser.block_fonts and (
+                    resource_type == "font" or any(part in request_url for part in blocked_font_url_parts)
+                ):
                     await route.abort()
                     return
 
                 await route.continue_()
 
             await context.route("**/*", _block_video_stream)
-            print("[INFO] Включена блокировка видеопотока браузера (BROWSER_BLOCK_VIDEO_STREAM=1).", flush=True)
+            print(
+                "[INFO] Browser resource blocking: "
+                f"video={'on' if self.runtime_config.browser.block_video_stream else 'off'}, "
+                f"images={'on' if self.runtime_config.browser.block_images else 'off'}, "
+                f"fonts={'on' if self.runtime_config.browser.block_fonts else 'off'}.",
+                flush=True,
+            )
 
         accounting_monitor_task = None
 
