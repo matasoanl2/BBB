@@ -142,6 +142,23 @@ class RuntimeApp:
                 args=get_browser_launch_args(),
             )
             context = await browser.new_context()
+
+        if self.runtime_config.browser.block_video_stream:
+            blocked_video_url_parts = (".m3u8", ".mp4", ".webm", ".m4s", ".ts")
+
+            async def _block_video_stream(route) -> None:
+                request = route.request
+                request_url = request.url.lower()
+
+                if request.resource_type == "media" or any(part in request_url for part in blocked_video_url_parts):
+                    await route.abort()
+                    return
+
+                await route.continue_()
+
+            await context.route("**/*", _block_video_stream)
+            print("[INFO] Включена блокировка видеопотока браузера (BROWSER_BLOCK_VIDEO_STREAM=1).", flush=True)
+
         accounting_monitor_task = None
 
         try:

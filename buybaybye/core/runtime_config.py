@@ -78,6 +78,7 @@ class BrowserConfig:
     accounting_ws_url: str
     bet_api_url: str
     headless: bool
+    block_video_stream: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +314,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             accounting_ws_url="wss://ws.betboom.ru:444/api/accounting_ws/v1",
             bet_api_url="https://game.betboom.ru/api/nards_studio_client/v1/bet",
             headless=_env_bool("HEADLESS"),
+            block_video_stream=_env_bool("BROWSER_BLOCK_VIDEO_STREAM", "false"),
         ),
         database=DatabaseConfig(
             user=os.getenv("DB_USER", "postgres"),
