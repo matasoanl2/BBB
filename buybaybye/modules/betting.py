@@ -234,7 +234,7 @@ def _refresh_reconciliation_phase(betting_state: dict) -> None:
         betting_state["reconciliation_phase"] = "idle"
 
 
-def _get_pending_win_confirmation_outcome(betting_state: dict) -> str:
+def _get_pending_win_confirmation_outcome(betting_state: dict, current_game_id: str | None = None) -> str:
     pending_confirmation = betting_state.get("pending_win_confirmation")
     if not isinstance(pending_confirmation, dict) or not pending_confirmation:
         return "none"
@@ -252,17 +252,25 @@ def _get_pending_win_confirmation_outcome(betting_state: dict) -> str:
     if confirmed_at is not None and account_balance_updated_at is not None and account_balance_updated_at > confirmed_at:
         return FALSE_WIN_STATUS
 
+    pending_game_id = pending_confirmation.get("game_id")
+    if current_game_id and pending_game_id and current_game_id != pending_game_id:
+        return FALSE_WIN_STATUS
+
     return "pending"
 
 
 def _finalize_pending_win_confirmation_if_ready(
     *,
     betting_state: dict,
+    current_game_id: str | None,
     get_db_connection_func,
     update_runtime_snapshot_func,
     slot_label: str,
 ) -> str:
-    confirmation_outcome = _get_pending_win_confirmation_outcome(betting_state)
+    confirmation_outcome = _get_pending_win_confirmation_outcome(
+        betting_state,
+        current_game_id=current_game_id,
+    )
     if confirmation_outcome not in {"confirmed", FALSE_WIN_STATUS}:
         return confirmation_outcome
 
@@ -301,19 +309,31 @@ def _finalize_pending_win_confirmation_if_ready(
         betting_state["consecutive_losses"] = 0
         betting_state["last_set_status"] = "win"
     else:
+        round_margin = float(pending_confirmation.get("round_margin", 0.0) or 0.0)
         expected_settlement_credit = float(pending_confirmation.get("expected_settlement_credit", 0.0) or 0.0)
         remaining_settlement_credit = float(betting_state.get("pending_expected_settlement_credit", 0.0) or 0.0)
-        betting_state["pending_expected_settlement_credit"] = max(0.0, remaining_settlement_credit - expected_settlement_credit)
-        betting_state["current_step"] = int(
+        false_round_margin = round_margin - expected_settlement_credit
+        current_step_before_resolution = int(
             pending_confirmation.get("current_step_before_resolution", betting_state.get("current_step", 0)) or 0
         )
-        betting_state["consecutive_losses"] = int(
+        consecutive_losses_before_resolution = int(
             pending_confirmation.get(
                 "consecutive_losses_before_resolution",
                 betting_state.get("consecutive_losses", 0),
             )
             or 0
         )
+        max_steps = int(pending_confirmation.get("max_steps", 1) or 1)
+
+        betting_state["pending_expected_settlement_credit"] = max(0.0, remaining_settlement_credit - expected_settlement_credit)
+        betting_state["total_profit"] += false_round_margin
+        betting_state["session_balance"] += false_round_margin
+        if current_step_before_resolution + 1 >= max_steps:
+            betting_state["current_step"] = 0
+            betting_state["consecutive_losses"] = 0
+        else:
+            betting_state["current_step"] = current_step_before_resolution + 1
+            betting_state["consecutive_losses"] = consecutive_losses_before_resolution + 1
         betting_state["last_set_status"] = FALSE_WIN_STATUS
 
     _refresh_reconciliation_phase(betting_state)
@@ -2503,8 +2523,10 @@ async def process_betting_round(
             if round_margin > 0:
                 betting_state["pending_win_confirmation"] = {
                     "recorded_at": datetime.now(timezone.utc).isoformat(),
+                    "game_id": game_id,
                     "expected_settlement_credit": settlement_credit,
                     "round_margin": round_margin,
+                    "max_steps": max_steps,
                     "current_step_before_resolution": current_step_for_log,
                     "consecutive_losses_before_resolution": previous_consecutive_losses,
                     "history_ids": history_ids,
@@ -2631,8 +2653,10 @@ async def process_betting_round(
                 if round_margin_2 > 0:
                     betting_state_2["pending_win_confirmation"] = {
                         "recorded_at": datetime.now(timezone.utc).isoformat(),
+                        "game_id": game_id,
                         "expected_settlement_credit": settlement_credit_2,
                         "round_margin": round_margin_2,
+                        "max_steps": max_steps_2,
                         "current_step_before_resolution": current_step_2,
                         "consecutive_losses_before_resolution": previous_consecutive_losses_2,
                         "history_ids": history_ids_2,
@@ -2684,6 +2708,7 @@ async def process_betting_round(
 
     pending_win_confirmation_status = _finalize_pending_win_confirmation_if_ready(
         betting_state=betting_state,
+        current_game_id=game_id,
         get_db_connection_func=get_db_connection_func,
         update_runtime_snapshot_func=update_runtime_snapshot_func,
         slot_label="1",
@@ -2692,6 +2717,7 @@ async def process_betting_round(
     if betting_state_2 is not None:
         pending_win_confirmation_status_2 = _finalize_pending_win_confirmation_if_ready(
             betting_state=betting_state_2,
+            current_game_id=game_id,
             get_db_connection_func=get_db_connection_func,
             update_runtime_snapshot_func=update_runtime_snapshot_func,
             slot_label="2",

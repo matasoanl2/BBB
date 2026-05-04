@@ -393,7 +393,7 @@ def test_false_win_waits_for_accounting_then_repeats_same_step() -> None:
             print_dice_stats_20_func=lambda *args, **kwargs: None,
             update_dynamic_bet_func=lambda *args, **kwargs: None,
             generate_random_bet_func=lambda: ("red", "1"),
-            calculate_bet_amount_func=lambda: [10.0, 20.0, 30.0][runtime_context.betting_state["current_step"]],
+            calculate_bet_amount_func=lambda: [10.0, 20.0, 30.0, 40.0][runtime_context.betting_state["current_step"]],
             place_bet_func=lambda *args, **kwargs: None,
             place_bets_func=_place_bets_stub,
         )
@@ -440,12 +440,119 @@ def test_false_win_waits_for_accounting_then_repeats_same_step() -> None:
     )
     asyncio.run(_run_round(followup_payload))
 
-    assert placed_calls == [(["R1"], 30.0)]
+    assert placed_calls == [(["R1"], 10.0)]
     assert runtime_context.betting_state["pending_win_confirmation"] is None
-    assert runtime_context.betting_state["current_step"] == 2
+    assert runtime_context.betting_state["current_step"] == 0
+    assert runtime_context.betting_state["session_balance"] == -10.0
+    assert runtime_context.betting_state["total_profit"] == -10.0
     assert runtime_context.betting_state["pending_expected_settlement_credit"] == 0.0
     assert runtime_context.betting_state["last_set_status"] == "false_win"
-    assert db_connections[-1].cursor_instance.executed[-1][1][0] == "false_win"
+    assert runtime_context.betting_state["pending_bets"] == []
+    assert any(
+        params[0] == "false_win"
+        for connection in db_connections
+        for _, params in connection.cursor_instance.executed
+        if params
+    )
+
+
+def test_false_win_without_accounting_update_does_not_skip_next_round() -> None:
+    runtime_config = _make_runtime_config()
+    runtime_context = _make_single_slot_runtime_context()
+    runtime_context.betting_state["current_step"] = 2
+    runtime_context.betting_state["consecutive_losses"] = 2
+    runtime_context.betting_state["account_balance"] = 1450.0
+    runtime_context.betting_state["pending_bets"] = [
+        {
+            "history_id": 303,
+            "outcome": "red",
+            "specifier": "1",
+            "amount": 10.0,
+            "bet_step": 2,
+            "token": "R1",
+            "round_number": 1,
+        }
+    ]
+
+    placed_calls: list[tuple[list[str], float]] = []
+    db_connections: list[_FakeConnection] = []
+
+    def _get_db_connection():
+        connection = _FakeConnection()
+        db_connections.append(connection)
+        return connection
+
+    async def _place_bets_stub(page, targets, amount):
+        placed_calls.append(([target.token for target in targets], amount))
+        return True
+
+    async def _run_round(payload: str) -> None:
+        await process_betting_round(
+            page=None,
+            payload=payload,
+            runtime_context=runtime_context,
+            runtime_config=runtime_config,
+            format_ws_payload_func=lambda value: value,
+            get_db_connection_func=_get_db_connection,
+            format_round_result_pretty_func=lambda dice: "R1,Y6",
+            format_outcome_pretty_func=lambda outcome, specifier: f"{outcome}:{specifier or 'D'}",
+            format_bet_log_func=_format_bet_log_stub,
+            get_balance_for_log_func=lambda: "1450р",
+            calculate_roi_func=lambda: 0.0,
+            update_runtime_snapshot_func=lambda *args, **kwargs: None,
+            print_session_stats_func=lambda *args, **kwargs: None,
+            print_dice_stats_20_func=lambda *args, **kwargs: None,
+            update_dynamic_bet_func=lambda *args, **kwargs: None,
+            generate_random_bet_func=lambda: ("red", "1"),
+            calculate_bet_amount_func=lambda: [10.0, 20.0, 30.0, 40.0][runtime_context.betting_state["current_step"]],
+            place_bet_func=lambda *args, **kwargs: None,
+            place_bets_func=_place_bets_stub,
+        )
+
+    winning_payload = json.dumps(
+        {
+            "status": "rng_values",
+            "game_id": "game-false-win-no-accounting-1",
+            "results": {
+                "dice": [{"color": "red", "value": 1}, {"color": "yellow", "value": 6}],
+                "player": {"name": "tester", "position": "left"},
+            },
+        }
+    )
+    asyncio.run(_run_round(winning_payload))
+
+    assert placed_calls == []
+    assert runtime_context.betting_state["pending_win_confirmation"] is not None
+    assert runtime_context.betting_state["current_step"] == 2
+    assert runtime_context.betting_state["pending_expected_settlement_credit"] == 57.0
+    assert db_connections[0].cursor_instance.executed[-1][1][0] == "win_pending_confirmation"
+
+    followup_payload = json.dumps(
+        {
+            "status": "rng_values",
+            "game_id": "game-false-win-no-accounting-2",
+            "results": {
+                "dice": [{"color": "yellow", "value": 2}, {"color": "red", "value": 6}],
+                "player": {"name": "tester", "position": "right"},
+            },
+        }
+    )
+    asyncio.run(_run_round(followup_payload))
+
+    assert placed_calls == [(["R1"], 10.0)]
+    assert runtime_context.betting_state["pending_win_confirmation"] is None
+    assert runtime_context.betting_state["current_step"] == 0
+    assert runtime_context.betting_state["session_balance"] == -10.0
+    assert runtime_context.betting_state["total_profit"] == -10.0
+    assert runtime_context.betting_state["pending_expected_settlement_credit"] == 0.0
+    assert runtime_context.betting_state["last_set_status"] == "false_win"
+    assert runtime_context.betting_state["pending_bets"] == []
+    assert any(
+        params[0] == "false_win"
+        for connection in db_connections
+        for _, params in connection.cursor_instance.executed
+        if params
+    )
 
 
 def test_confirmed_win_waits_for_accounting_then_resets_step() -> None:
