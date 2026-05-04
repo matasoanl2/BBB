@@ -14,6 +14,9 @@ from buybaybye.core.runtime_config import BetTarget, RuntimeConfig
 BETTING_BALANCE_EPSILON = 0.009
 WIN_PENDING_CONFIRMATION_STATUS = "win_pending_confirmation"
 FALSE_WIN_STATUS = "false_win"
+PENDING_WIN_CONFIRMATION_WAIT_SECONDS = 0.2
+PENDING_WIN_CONFIRMATION_POLL_SECONDS = 0.02
+PENDING_WIN_CONFIRMATION_SET_FALLBACK_CHECKS_KEY = "pending_win_confirmation_set_fallback_checks_remaining"
 
 
 def format_bet_log(
@@ -362,7 +365,59 @@ def _run_pending_win_confirmation_precheck(
         update_runtime_snapshot_func=update_runtime_snapshot_func,
         slot_label=slot_label,
     )
+    if confirmation_outcome == "pending":
+        pending_confirmation = betting_state.get("pending_win_confirmation") or {}
+        fallback_checks_remaining = int(pending_confirmation.get(PENDING_WIN_CONFIRMATION_SET_FALLBACK_CHECKS_KEY, 0) or 0)
+        if fallback_checks_remaining > 0:
+            pending_confirmation[PENDING_WIN_CONFIRMATION_SET_FALLBACK_CHECKS_KEY] = fallback_checks_remaining - 1
+            return True
     return confirmation_outcome != "pending"
+
+
+def _set_pending_win_confirmation_set_fallback_checks(betting_state: dict, checks_remaining: int) -> None:
+    pending_confirmation = betting_state.get("pending_win_confirmation")
+    if isinstance(pending_confirmation, dict) and pending_confirmation:
+        pending_confirmation[PENDING_WIN_CONFIRMATION_SET_FALLBACK_CHECKS_KEY] = max(0, int(checks_remaining or 0))
+
+
+def _clear_pending_win_confirmation_set_fallback_checks(betting_state: dict) -> None:
+    pending_confirmation = betting_state.get("pending_win_confirmation")
+    if isinstance(pending_confirmation, dict) and pending_confirmation:
+        pending_confirmation.pop(PENDING_WIN_CONFIRMATION_SET_FALLBACK_CHECKS_KEY, None)
+
+
+async def _wait_briefly_for_pending_win_confirmation(
+    *,
+    betting_state: dict,
+    get_db_connection_func,
+    update_runtime_snapshot_func,
+    slot_label: str,
+) -> str:
+    confirmation_outcome = _finalize_pending_win_confirmation_if_ready(
+        betting_state=betting_state,
+        get_db_connection_func=get_db_connection_func,
+        update_runtime_snapshot_func=update_runtime_snapshot_func,
+        slot_label=slot_label,
+    )
+    if confirmation_outcome != "pending":
+        return confirmation_outcome
+
+    event_loop = asyncio.get_running_loop()
+    deadline = event_loop.time() + PENDING_WIN_CONFIRMATION_WAIT_SECONDS
+    while True:
+        remaining_seconds = deadline - event_loop.time()
+        if remaining_seconds <= 0:
+            return "pending"
+
+        await asyncio.sleep(min(PENDING_WIN_CONFIRMATION_POLL_SECONDS, remaining_seconds))
+        confirmation_outcome = _finalize_pending_win_confirmation_if_ready(
+            betting_state=betting_state,
+            get_db_connection_func=get_db_connection_func,
+            update_runtime_snapshot_func=update_runtime_snapshot_func,
+            slot_label=slot_label,
+        )
+        if confirmation_outcome != "pending":
+            return confirmation_outcome
 
 
 def _has_fresh_accounting_update_after_api_fail(betting_state: dict) -> bool:
@@ -2735,228 +2790,208 @@ async def process_betting_round(
                 except Exception:
                     pass
 
-    if not _run_pending_win_confirmation_precheck(
-        betting_state=betting_state,
-        get_db_connection_func=get_db_connection_func,
-        update_runtime_snapshot_func=update_runtime_snapshot_func,
-        slot_label="1",
-    ):
-        if bet_debug_enabled:
-            print("[DEBUG PROCESS] Ждём подтверждения выигрыша по accounting перед новым SET слот 1.", flush=True)
-        return
+    slot1_process_level_precheck_required = True
+    slot2_process_level_precheck_required = betting_state_2 is not None
+    slot1_fallback_active = False
+    slot2_fallback_active = False
 
-    if betting_state_2 is not None and not _run_pending_win_confirmation_precheck(
-        betting_state=betting_state_2,
-        get_db_connection_func=get_db_connection_func,
-        update_runtime_snapshot_func=update_runtime_snapshot_func,
-        slot_label="2",
-    ):
-        if bet_debug_enabled:
-            print("[DEBUG PROCESS] Ждём подтверждения выигрыша по accounting перед новым SET слот 2.", flush=True)
-        return
+    pending_confirmation = betting_state.get("pending_win_confirmation")
+    if isinstance(pending_confirmation, dict) and pending_confirmation:
+        slot1_confirmation_outcome = await _wait_briefly_for_pending_win_confirmation(
+            betting_state=betting_state,
+            get_db_connection_func=get_db_connection_func,
+            update_runtime_snapshot_func=update_runtime_snapshot_func,
+            slot_label="1",
+        )
+        if slot1_confirmation_outcome == "pending":
+            slot1_process_level_precheck_required = False
+            slot1_fallback_active = True
+            _set_pending_win_confirmation_set_fallback_checks(betting_state, checks_remaining=2)
+            if bet_debug_enabled:
+                print(
+                    "[DEBUG PROCESS] Accounting не успел обновиться после RES слот 1; продолжаем SET без финализации pending win.",
+                    flush=True,
+                )
 
-    slot2_configured_tokens = set(runtime_context.get_configured_target_tokens_2())
-    if bet_debug_enabled:
-        print(f"[DEBUG PROCESS] DYNAMIC_BET_MODE={dynamic_bet_mode}, calling _update_dynamic_bet", flush=True)
-    if dynamic_bet_mode:
-        if bet_debug_enabled:
-            print("[DEBUG PROCESS] Entering if DYNAMIC_BET_MODE, calling function", flush=True)
-        if place_bets_2_func is not None and not multi_target_mode and slot2_configured_tokens:
-            update_dynamic_bet_func(excluded_tokens=slot2_configured_tokens)
-        else:
-            update_dynamic_bet_func()
-    
-    bet_targets_to_place: tuple[BetTarget, ...]
-    if dynamic_bet_mode:
-        if multi_target_mode:
-            dynamic_target_tokens = list(betting_state.get("dynamic_targets") or [])
-            resolved_dynamic_targets = list(_resolve_target_tokens(dynamic_target_tokens))
-            if resolved_dynamic_targets:
-                bet_targets_to_place = tuple(resolved_dynamic_targets)
-            else:
-                bet_targets_to_place = configured_targets
-        else:
-            current_outcome, current_specifier = runtime_context.get_current_bet_target()
-            bet_targets_to_place = (BetTarget(outcome=current_outcome, specifier="" if current_outcome == "double" else current_specifier),)
-    else:
-        bet_targets_to_place = configured_targets
-
-    consecutive_losses = betting_state.get("consecutive_losses", 0)
-    random_fallback_enabled = runtime_config.dynamic_betting.random_fallback_enabled
-    random_fallback_loss_streak = runtime_config.dynamic_betting.random_fallback_loss_streak
-    if random_fallback_enabled and len(bet_targets_to_place) == 1 and consecutive_losses >= random_fallback_loss_streak:
-        print("", flush=True)
-        new_outcome, new_specifier = generate_random_bet_func()
-        runtime_context.set_current_bet_target(new_outcome, new_specifier)
-        betting_state["consecutive_losses"] = 0
-        print("", flush=True)
-        bet_targets_to_place = (BetTarget(outcome=new_outcome, specifier="" if new_outcome == "double" else new_specifier),)
-
-    bet_amount = calculate_bet_amount_func()
-    if (
-        dynamic_bet_mode
-        and not multi_target_mode
-        and len(bet_targets_to_place) == 1
-        and place_bets_2_func is not None
-        and slot2_configured_tokens
-    ):
-        _resolved_slot1 = bet_targets_to_place[0]
-        if _resolved_slot1.token not in slot2_configured_tokens:
-            pass
-        else:
-            _updated_outcome, _updated_specifier = runtime_context.get_current_bet_target()
-            _updated_target = BetTarget(
-                outcome=_updated_outcome,
-                specifier="" if _updated_outcome == "double" else _updated_specifier,
+    if betting_state_2 is not None:
+        pending_confirmation_2 = betting_state_2.get("pending_win_confirmation")
+        if isinstance(pending_confirmation_2, dict) and pending_confirmation_2:
+            slot2_confirmation_outcome = await _wait_briefly_for_pending_win_confirmation(
+                betting_state=betting_state_2,
+                get_db_connection_func=get_db_connection_func,
+                update_runtime_snapshot_func=update_runtime_snapshot_func,
+                slot_label="2",
             )
-            if _updated_target.token != _resolved_slot1.token:
-                bet_targets_to_place = (_updated_target,)
+            if slot2_confirmation_outcome == "pending":
+                slot2_process_level_precheck_required = False
+                slot2_fallback_active = True
+                _set_pending_win_confirmation_set_fallback_checks(betting_state_2, checks_remaining=2)
                 if bet_debug_enabled:
                     print(
-                        f"[ANTI-OVERLAP][1] Цель слота 1 {_resolved_slot1.token} пересекалась со слотом 2; "
-                        f"берем следующий target из dynamic top: {_updated_target.token}",
+                        "[DEBUG PROCESS] Accounting не успел обновиться после RES слот 2; продолжаем SET без финализации pending win.",
                         flush=True,
                     )
 
-    if bet_debug_enabled:
-        print(
-            f"[DEBUG PROCESS_BET] Вызов place_bets для {[target.token for target in bet_targets_to_place]} по {bet_amount:.0f}р на цель",
-            flush=True,
-        )
-    slot2_targets_to_place: tuple[BetTarget, ...] = ()
-    slot2_amount = 0.0
+    try:
+        if slot1_process_level_precheck_required and not _run_pending_win_confirmation_precheck(
+            betting_state=betting_state,
+            get_db_connection_func=get_db_connection_func,
+            update_runtime_snapshot_func=update_runtime_snapshot_func,
+            slot_label="1",
+        ):
+            if bet_debug_enabled:
+                print("[DEBUG PROCESS] Ждём подтверждения выигрыша по accounting перед новым SET слот 1.", flush=True)
+            return
 
-    # Второй слот: подготовка целей/суммы для размещения ставок
-    if place_bets_2_func is not None and calculate_bet_amount_2_func is not None:
-        slot1_target_tokens = {target.token for target in bet_targets_to_place}
-        slot2_targets = runtime_context.get_configured_bet_targets_2()
-        slot2_dynamic_mode = runtime_config.dynamic_betting.enabled_2
+        if (
+            betting_state_2 is not None
+            and slot2_process_level_precheck_required
+            and not _run_pending_win_confirmation_precheck(
+                betting_state=betting_state_2,
+                get_db_connection_func=get_db_connection_func,
+                update_runtime_snapshot_func=update_runtime_snapshot_func,
+                slot_label="2",
+            )
+        ):
+            if bet_debug_enabled:
+                print("[DEBUG PROCESS] Ждём подтверждения выигрыша по accounting перед новым SET слот 2.", flush=True)
+            return
 
-        if slot2_dynamic_mode:
-            multi_target_mode_2 = len(slot2_targets) > 1
-            dynamic_multi_effective_2 = multi_target_mode_2 and runtime_config.dynamic_betting.multi_target_enabled
-
-            if dynamic_multi_effective_2:
-                if update_dynamic_bet_2_func is not None:
-                    update_dynamic_bet_2_func()
-                slot2_dynamic_tokens = list((runtime_context.betting_state_2 or {}).get("dynamic_targets") or [])
-                resolved_dynamic_targets_2 = _resolve_target_tokens(slot2_dynamic_tokens)
-                if resolved_dynamic_targets_2:
-                    slot2_targets = resolved_dynamic_targets_2
+        slot2_configured_tokens = set(runtime_context.get_configured_target_tokens_2())
+        if bet_debug_enabled:
+            print(f"[DEBUG PROCESS] DYNAMIC_BET_MODE={dynamic_bet_mode}, calling _update_dynamic_bet", flush=True)
+        if dynamic_bet_mode:
+            if bet_debug_enabled:
+                print("[DEBUG PROCESS] Entering if DYNAMIC_BET_MODE, calling function", flush=True)
+            if place_bets_2_func is not None and not multi_target_mode and slot2_configured_tokens:
+                update_dynamic_bet_func(excluded_tokens=slot2_configured_tokens)
             else:
-                if update_dynamic_bet_2_func is not None:
-                    update_dynamic_bet_2_func(excluded_tokens=slot1_target_tokens)
-                slot2_outcome, slot2_specifier = runtime_context.get_current_bet_target_2()
-                slot2_targets = (
-                    BetTarget(
-                        outcome=slot2_outcome,
-                        specifier="" if slot2_outcome == "double" else slot2_specifier,
-                    ),
-                )
+                update_dynamic_bet_func()
 
-        slot2_targets = tuple(target for target in slot2_targets if target.token not in slot1_target_tokens)
-        if slot2_targets:
-            slot2_targets_to_place = slot2_targets
-            slot2_amount = calculate_bet_amount_2_func()
+        bet_targets_to_place: tuple[BetTarget, ...]
+        if dynamic_bet_mode:
+            if multi_target_mode:
+                dynamic_target_tokens = list(betting_state.get("dynamic_targets") or [])
+                resolved_dynamic_targets = list(_resolve_target_tokens(dynamic_target_tokens))
+                if resolved_dynamic_targets:
+                    bet_targets_to_place = tuple(resolved_dynamic_targets)
+                else:
+                    bet_targets_to_place = configured_targets
+            else:
+                current_outcome, current_specifier = runtime_context.get_current_bet_target()
+                bet_targets_to_place = (
+                    BetTarget(outcome=current_outcome, specifier="" if current_outcome == "double" else current_specifier),
+                )
         else:
+            bet_targets_to_place = configured_targets
+
+        consecutive_losses = betting_state.get("consecutive_losses", 0)
+        random_fallback_enabled = runtime_config.dynamic_betting.random_fallback_enabled
+        random_fallback_loss_streak = runtime_config.dynamic_betting.random_fallback_loss_streak
+        if random_fallback_enabled and len(bet_targets_to_place) == 1 and consecutive_losses >= random_fallback_loss_streak:
+            print("", flush=True)
+            new_outcome, new_specifier = generate_random_bet_func()
+            runtime_context.set_current_bet_target(new_outcome, new_specifier)
+            betting_state["consecutive_losses"] = 0
+            print("", flush=True)
+            bet_targets_to_place = (
+                BetTarget(outcome=new_outcome, specifier="" if new_outcome == "double" else new_specifier),
+            )
+
+        bet_amount = calculate_bet_amount_func()
+        if (
+            dynamic_bet_mode
+            and not multi_target_mode
+            and len(bet_targets_to_place) == 1
+            and place_bets_2_func is not None
+            and slot2_configured_tokens
+        ):
+            _resolved_slot1 = bet_targets_to_place[0]
+            if _resolved_slot1.token in slot2_configured_tokens:
+                _updated_outcome, _updated_specifier = runtime_context.get_current_bet_target()
+                _updated_target = BetTarget(
+                    outcome=_updated_outcome,
+                    specifier="" if _updated_outcome == "double" else _updated_specifier,
+                )
+                if _updated_target.token != _resolved_slot1.token:
+                    bet_targets_to_place = (_updated_target,)
+                    if bet_debug_enabled:
+                        print(
+                            f"[ANTI-OVERLAP][1] Цель слота 1 {_resolved_slot1.token} пересекалась со слотом 2; "
+                            f"берем следующий target из dynamic top: {_updated_target.token}",
+                            flush=True,
+                        )
+
+        if bet_debug_enabled:
             print(
-                "[WARNING][2] Все цели второго слота пересекаются с целями слота 1 в текущем раунде; слот 2 пропущен.",
+                f"[DEBUG PROCESS_BET] Вызов place_bets для {[target.token for target in bet_targets_to_place]} по {bet_amount:.0f}р на цель",
                 flush=True,
             )
+        slot2_targets_to_place: tuple[BetTarget, ...] = ()
+        slot2_amount = 0.0
 
-    combine_slots_in_single_post = bool(getattr(runtime_config.betting, "combine_slots_in_single_post", False))
-    slot1_ready_for_combined = bool(bet_targets_to_place)
-    slot2_ready_for_combined = bool(slot2_targets_to_place)
-    should_attempt_combined_precheck = (
-        combine_slots_in_single_post
-        and place_bets_combined_slots_func is not None
-        and slot1_ready_for_combined
-        and slot2_ready_for_combined
-    )
+        if place_bets_2_func is not None and calculate_bet_amount_2_func is not None:
+            slot1_target_tokens = {target.token for target in bet_targets_to_place}
+            slot2_targets = runtime_context.get_configured_bet_targets_2()
+            slot2_dynamic_mode = runtime_config.dynamic_betting.enabled_2
 
-    if should_attempt_combined_precheck:
-        shared_account_balance = _normalize_account_balance((runtime_context.betting_state or {}).get("account_balance"))
-        if shared_account_balance is not None and runtime_context.betting_state_2 is not None:
-            runtime_context.betting_state_2["account_balance"] = shared_account_balance
-            runtime_context.betting_state_2["account_balance_updated_at"] = (runtime_context.betting_state or {}).get(
-                "account_balance_updated_at"
-            )
+            if slot2_dynamic_mode:
+                multi_target_mode_2 = len(slot2_targets) > 1
+                dynamic_multi_effective_2 = multi_target_mode_2 and runtime_config.dynamic_betting.multi_target_enabled
 
-        slot1_step_for_history = int((runtime_context.betting_state or {}).get("current_step", 0) or 0)
-        slot2_step_for_history = int((runtime_context.betting_state_2 or {}).get("current_step", 0) or 0)
-        slot1_max_steps = len((runtime_context.current_strategy or {}).get("coefficients", [1])) if runtime_context.current_strategy else 15
-        slot2_max_steps = len((runtime_context.current_strategy_2 or {}).get("coefficients", [1])) if runtime_context.current_strategy_2 else 15
-        slot1_round_display = str(int((runtime_context.betting_state or {}).get("total_bet_rounds", 0) or 0) + 1).zfill(3)
-        slot2_round_display = str(int((runtime_context.betting_state_2 or {}).get("total_bet_rounds", 0) or 0) + 1).zfill(3)
+                if dynamic_multi_effective_2:
+                    if update_dynamic_bet_2_func is not None:
+                        update_dynamic_bet_2_func()
+                    slot2_dynamic_tokens = list((runtime_context.betting_state_2 or {}).get("dynamic_targets") or [])
+                    resolved_dynamic_targets_2 = _resolve_target_tokens(slot2_dynamic_tokens)
+                    if resolved_dynamic_targets_2:
+                        slot2_targets = resolved_dynamic_targets_2
+                else:
+                    if update_dynamic_bet_2_func is not None:
+                        update_dynamic_bet_2_func(excluded_tokens=slot1_target_tokens)
+                    slot2_outcome, slot2_specifier = runtime_context.get_current_bet_target_2()
+                    slot2_targets = (
+                        BetTarget(
+                            outcome=slot2_outcome,
+                            specifier="" if slot2_outcome == "double" else slot2_specifier,
+                        ),
+                    )
 
-        slot1_precheck_ok, slot1_effective_targets, slot1_effective_amount = _run_set_precheck_for_slot(
-            betting_state=runtime_context.betting_state,
-            current_strategy=runtime_context.current_strategy or {},
-            amount=bet_amount,
-            bet_targets=bet_targets_to_place,
-            requested_targets=bet_targets_to_place,
-            slot_label="1",
-            step_for_history=slot1_step_for_history,
-            max_steps=slot1_max_steps,
-            next_round_display=slot1_round_display,
-            runtime_config=runtime_config,
-            calculate_roi_func=calculate_roi_func,
-            format_outcome_pretty_func=format_outcome_pretty_func,
-            format_bet_log_func=format_bet_log_func,
-            get_balance_for_log_func=get_balance_for_log_func,
-            get_db_connection_func=get_db_connection_func,
-            update_runtime_snapshot_func=update_runtime_snapshot_func,
-            required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
-            resume_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
-        )
-        if slot1_precheck_ok:
-            bet_targets_to_place = slot1_effective_targets
-            bet_amount = slot1_effective_amount
-        else:
-            bet_targets_to_place = ()
-
-        def slot2_calculate_roi_func() -> float:
-            if runtime_context.betting_state_2 and runtime_context.betting_state_2.get("total_bet_amount", 0) > 0:
-                return (
-                    runtime_context.betting_state_2.get("total_profit", 0)
-                    / runtime_context.betting_state_2.get("total_bet_amount", 1)
-                    * 100
+            slot2_targets = tuple(target for target in slot2_targets if target.token not in slot1_target_tokens)
+            if slot2_targets:
+                slot2_targets_to_place = slot2_targets
+                slot2_amount = calculate_bet_amount_2_func()
+            else:
+                print(
+                    "[WARNING][2] Все цели второго слота пересекаются с целями слота 1 в текущем раунде; слот 2 пропущен.",
+                    flush=True,
                 )
-            return 0.0
 
-        slot2_precheck_ok, slot2_effective_targets, slot2_effective_amount = _run_set_precheck_for_slot(
-            betting_state=runtime_context.betting_state_2,
-            current_strategy=runtime_context.current_strategy_2 or {},
-            amount=slot2_amount,
-            bet_targets=slot2_targets_to_place,
-            requested_targets=slot2_targets_to_place,
-            slot_label="2",
-            step_for_history=slot2_step_for_history,
-            max_steps=slot2_max_steps,
-            next_round_display=slot2_round_display,
-            runtime_config=runtime_config,
-            calculate_roi_func=slot2_calculate_roi_func,
-            format_outcome_pretty_func=format_outcome_pretty_func,
-            format_bet_log_func=format_bet_log_func,
-            get_balance_for_log_func=get_balance_for_log_func,
-            get_db_connection_func=get_db_connection_func,
-            update_runtime_snapshot_func=update_runtime_snapshot_func,
-            required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
-            resume_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
-        )
-        if slot2_precheck_ok:
-            slot2_targets_to_place = slot2_effective_targets
-            slot2_amount = slot2_effective_amount
-        else:
-            slot2_targets_to_place = ()
-
+        combine_slots_in_single_post = bool(getattr(runtime_config.betting, "combine_slots_in_single_post", False))
         slot1_ready_for_combined = bool(bet_targets_to_place)
         slot2_ready_for_combined = bool(slot2_targets_to_place)
-    else:
-        if bet_targets_to_place:
+        should_attempt_combined_precheck = (
+            combine_slots_in_single_post
+            and place_bets_combined_slots_func is not None
+            and slot1_ready_for_combined
+            and slot2_ready_for_combined
+        )
+
+        if should_attempt_combined_precheck:
+            shared_account_balance = _normalize_account_balance((runtime_context.betting_state or {}).get("account_balance"))
+            if shared_account_balance is not None and runtime_context.betting_state_2 is not None:
+                runtime_context.betting_state_2["account_balance"] = shared_account_balance
+                runtime_context.betting_state_2["account_balance_updated_at"] = (runtime_context.betting_state or {}).get(
+                    "account_balance_updated_at"
+                )
+
             slot1_step_for_history = int((runtime_context.betting_state or {}).get("current_step", 0) or 0)
+            slot2_step_for_history = int((runtime_context.betting_state_2 or {}).get("current_step", 0) or 0)
             slot1_max_steps = len((runtime_context.current_strategy or {}).get("coefficients", [1])) if runtime_context.current_strategy else 15
+            slot2_max_steps = len((runtime_context.current_strategy_2 or {}).get("coefficients", [1])) if runtime_context.current_strategy_2 else 15
             slot1_round_display = str(int((runtime_context.betting_state or {}).get("total_bet_rounds", 0) or 0) + 1).zfill(3)
+            slot2_round_display = str(int((runtime_context.betting_state_2 or {}).get("total_bet_rounds", 0) or 0) + 1).zfill(3)
+
             slot1_precheck_ok, slot1_effective_targets, slot1_effective_amount = _run_set_precheck_for_slot(
                 betting_state=runtime_context.betting_state,
                 current_strategy=runtime_context.current_strategy or {},
@@ -2983,7 +3018,6 @@ async def process_betting_round(
             else:
                 bet_targets_to_place = ()
 
-        if slot2_targets_to_place and runtime_context.betting_state_2 is not None:
             def slot2_calculate_roi_func() -> float:
                 if runtime_context.betting_state_2 and runtime_context.betting_state_2.get("total_bet_amount", 0) > 0:
                     return (
@@ -2993,9 +3027,6 @@ async def process_betting_round(
                     )
                 return 0.0
 
-            slot2_step_for_history = int((runtime_context.betting_state_2 or {}).get("current_step", 0) or 0)
-            slot2_max_steps = len((runtime_context.current_strategy_2 or {}).get("coefficients", [1])) if runtime_context.current_strategy_2 else 15
-            slot2_round_display = str(int((runtime_context.betting_state_2 or {}).get("total_bet_rounds", 0) or 0) + 1).zfill(3)
             slot2_precheck_ok, slot2_effective_targets, slot2_effective_amount = _run_set_precheck_for_slot(
                 betting_state=runtime_context.betting_state_2,
                 current_strategy=runtime_context.current_strategy_2 or {},
@@ -3022,117 +3053,190 @@ async def process_betting_round(
             else:
                 slot2_targets_to_place = ()
 
-    # Общий precheck по shared balance: если на оба слота не хватает,
-    # размещаем только один слот (предпочтение slot1) и явно логируем пропуск второго.
-    shared_balance_for_slots = _normalize_account_balance((runtime_context.betting_state or {}).get("account_balance"))
-    if shared_balance_for_slots is not None and bet_targets_to_place and slot2_targets_to_place:
-        slot1_total_amount = float(bet_amount) * float(len(bet_targets_to_place))
-        slot2_total_amount = float(slot2_amount) * float(len(slot2_targets_to_place))
-        combined_total_amount = slot1_total_amount + slot2_total_amount
+            slot1_ready_for_combined = bool(bet_targets_to_place)
+            slot2_ready_for_combined = bool(slot2_targets_to_place)
+        else:
+            if bet_targets_to_place:
+                slot1_step_for_history = int((runtime_context.betting_state or {}).get("current_step", 0) or 0)
+                slot1_max_steps = len((runtime_context.current_strategy or {}).get("coefficients", [1])) if runtime_context.current_strategy else 15
+                slot1_round_display = str(int((runtime_context.betting_state or {}).get("total_bet_rounds", 0) or 0) + 1).zfill(3)
+                slot1_precheck_ok, slot1_effective_targets, slot1_effective_amount = _run_set_precheck_for_slot(
+                    betting_state=runtime_context.betting_state,
+                    current_strategy=runtime_context.current_strategy or {},
+                    amount=bet_amount,
+                    bet_targets=bet_targets_to_place,
+                    requested_targets=bet_targets_to_place,
+                    slot_label="1",
+                    step_for_history=slot1_step_for_history,
+                    max_steps=slot1_max_steps,
+                    next_round_display=slot1_round_display,
+                    runtime_config=runtime_config,
+                    calculate_roi_func=calculate_roi_func,
+                    format_outcome_pretty_func=format_outcome_pretty_func,
+                    format_bet_log_func=format_bet_log_func,
+                    get_balance_for_log_func=get_balance_for_log_func,
+                    get_db_connection_func=get_db_connection_func,
+                    update_runtime_snapshot_func=update_runtime_snapshot_func,
+                    required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
+                    resume_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
+                )
+                if slot1_precheck_ok:
+                    bet_targets_to_place = slot1_effective_targets
+                    bet_amount = slot1_effective_amount
+                else:
+                    bet_targets_to_place = ()
 
-        if combined_total_amount > shared_balance_for_slots + 1e-9:
-            slot1_affordable = slot1_total_amount <= shared_balance_for_slots + 1e-9
-            slot2_affordable = slot2_total_amount <= shared_balance_for_slots + 1e-9
+            if slot2_targets_to_place and runtime_context.betting_state_2 is not None:
+                def slot2_calculate_roi_func() -> float:
+                    if runtime_context.betting_state_2 and runtime_context.betting_state_2.get("total_bet_amount", 0) > 0:
+                        return (
+                            runtime_context.betting_state_2.get("total_profit", 0)
+                            / runtime_context.betting_state_2.get("total_bet_amount", 1)
+                            * 100
+                        )
+                    return 0.0
 
-            skipped_slot = ""
-            keep_slot = ""
-            skipped_required_total = 0.0
+                slot2_step_for_history = int((runtime_context.betting_state_2 or {}).get("current_step", 0) or 0)
+                slot2_max_steps = len((runtime_context.current_strategy_2 or {}).get("coefficients", [1])) if runtime_context.current_strategy_2 else 15
+                slot2_round_display = str(int((runtime_context.betting_state_2 or {}).get("total_bet_rounds", 0) or 0) + 1).zfill(3)
+                slot2_precheck_ok, slot2_effective_targets, slot2_effective_amount = _run_set_precheck_for_slot(
+                    betting_state=runtime_context.betting_state_2,
+                    current_strategy=runtime_context.current_strategy_2 or {},
+                    amount=slot2_amount,
+                    bet_targets=slot2_targets_to_place,
+                    requested_targets=slot2_targets_to_place,
+                    slot_label="2",
+                    step_for_history=slot2_step_for_history,
+                    max_steps=slot2_max_steps,
+                    next_round_display=slot2_round_display,
+                    runtime_config=runtime_config,
+                    calculate_roi_func=slot2_calculate_roi_func,
+                    format_outcome_pretty_func=format_outcome_pretty_func,
+                    format_bet_log_func=format_bet_log_func,
+                    get_balance_for_log_func=get_balance_for_log_func,
+                    get_db_connection_func=get_db_connection_func,
+                    update_runtime_snapshot_func=update_runtime_snapshot_func,
+                    required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
+                    resume_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
+                )
+                if slot2_precheck_ok:
+                    slot2_targets_to_place = slot2_effective_targets
+                    slot2_amount = slot2_effective_amount
+                else:
+                    slot2_targets_to_place = ()
 
-            if slot1_affordable and not slot2_affordable:
-                slot2_targets_to_place = ()
-                slot2_amount = 0.0
-                skipped_slot = "2"
-                keep_slot = "1"
-                skipped_required_total = slot2_total_amount
-            elif slot2_affordable and not slot1_affordable:
-                bet_targets_to_place = ()
-                bet_amount = 0.0
-                skipped_slot = "1"
-                keep_slot = "2"
-                skipped_required_total = slot1_total_amount
-            elif slot1_affordable and slot2_affordable:
-                # Оба слота по отдельности помещаются, но суммарно нет — приоритет за slot1.
-                slot2_targets_to_place = ()
-                slot2_amount = 0.0
-                skipped_slot = "2"
-                keep_slot = "1"
-                skipped_required_total = slot2_total_amount
-            else:
-                # Ни один слот отдельно не помещается в текущий shared balance.
-                bet_targets_to_place = ()
-                slot2_targets_to_place = ()
-                bet_amount = 0.0
-                slot2_amount = 0.0
-                skipped_slot = "1+2"
-                keep_slot = "none"
-                skipped_required_total = min(slot1_total_amount, slot2_total_amount)
+        shared_balance_for_slots = _normalize_account_balance((runtime_context.betting_state or {}).get("account_balance"))
+        if shared_balance_for_slots is not None and bet_targets_to_place and slot2_targets_to_place:
+            slot1_total_amount = float(bet_amount) * float(len(bet_targets_to_place))
+            slot2_total_amount = float(slot2_amount) * float(len(slot2_targets_to_place))
+            combined_total_amount = slot1_total_amount + slot2_total_amount
 
-            _print_bet_system_log(
-                runtime_config=runtime_config,
-                event="set_skip_slot_shared_balance_limit",
-                level="info",
-                message=(
-                    "[SET-CHECK] Недостаточно shared balance для двух слотов; "
-                    f"пропускаем slot={skipped_slot}, размещаем slot={keep_slot}."
-                ),
-                extra={
-                    "account_balance": shared_balance_for_slots,
-                    "combined_required_total": combined_total_amount,
-                    "slot1_required_total": slot1_total_amount,
-                    "slot2_required_total": slot2_total_amount,
-                    "skipped_slot": skipped_slot,
-                    "kept_slot": keep_slot,
-                    "skipped_required_total": skipped_required_total,
-                },
-            )
+            if combined_total_amount > shared_balance_for_slots + 1e-9:
+                slot1_affordable = slot1_total_amount <= shared_balance_for_slots + 1e-9
+                slot2_affordable = slot2_total_amount <= shared_balance_for_slots + 1e-9
 
+                skipped_slot = ""
+                keep_slot = ""
+                skipped_required_total = 0.0
+
+                if slot1_affordable and not slot2_affordable:
+                    slot2_targets_to_place = ()
+                    slot2_amount = 0.0
+                    skipped_slot = "2"
+                    keep_slot = "1"
+                    skipped_required_total = slot2_total_amount
+                elif slot2_affordable and not slot1_affordable:
+                    bet_targets_to_place = ()
+                    bet_amount = 0.0
+                    skipped_slot = "1"
+                    keep_slot = "2"
+                    skipped_required_total = slot1_total_amount
+                elif slot1_affordable and slot2_affordable:
+                    slot2_targets_to_place = ()
+                    slot2_amount = 0.0
+                    skipped_slot = "2"
+                    keep_slot = "1"
+                    skipped_required_total = slot2_total_amount
+                else:
+                    bet_targets_to_place = ()
+                    slot2_targets_to_place = ()
+                    bet_amount = 0.0
+                    slot2_amount = 0.0
+                    skipped_slot = "1+2"
+                    keep_slot = "none"
+                    skipped_required_total = min(slot1_total_amount, slot2_total_amount)
+
+                _print_bet_system_log(
+                    runtime_config=runtime_config,
+                    event="set_skip_slot_shared_balance_limit",
+                    level="info",
+                    message=(
+                        "[SET-CHECK] Недостаточно shared balance для двух слотов; "
+                        f"пропускаем slot={skipped_slot}, размещаем slot={keep_slot}."
+                    ),
+                    extra={
+                        "account_balance": shared_balance_for_slots,
+                        "combined_required_total": combined_total_amount,
+                        "slot1_required_total": slot1_total_amount,
+                        "slot2_required_total": slot2_total_amount,
+                        "skipped_slot": skipped_slot,
+                        "kept_slot": keep_slot,
+                        "skipped_required_total": skipped_required_total,
+                    },
+                )
+
+                if bet_debug_enabled:
+                    print(
+                        (
+                            "[DEBUG SHARED-BALANCE] "
+                            f"balance={shared_balance_for_slots:.0f}р, "
+                            f"slot1_total={slot1_total_amount:.0f}р, "
+                            f"slot2_total={slot2_total_amount:.0f}р, "
+                            f"kept={keep_slot}, skipped={skipped_slot}"
+                        ),
+                        flush=True,
+                    )
+
+        slot1_ready_for_combined = bool(bet_targets_to_place)
+        slot2_ready_for_combined = bool(slot2_targets_to_place)
+
+        can_use_combined_post = (
+            combine_slots_in_single_post
+            and place_bets_combined_slots_func is not None
+            and slot1_ready_for_combined
+            and slot2_ready_for_combined
+        )
+
+        if can_use_combined_post:
             if bet_debug_enabled:
                 print(
                     (
-                        "[DEBUG SHARED-BALANCE] "
-                        f"balance={shared_balance_for_slots:.0f}р, "
-                        f"slot1_total={slot1_total_amount:.0f}р, "
-                        f"slot2_total={slot2_total_amount:.0f}р, "
-                        f"kept={keep_slot}, skipped={skipped_slot}"
+                        "[DEBUG PROCESS_BET-COMBINED] Вызов combined POST: "
+                        f"slot1={[target.token for target in bet_targets_to_place]} ({bet_amount:.0f}р), "
+                        f"slot2={[t.token for t in slot2_targets_to_place]} ({slot2_amount:.0f}р)"
                     ),
                     flush=True,
                 )
-
-    slot1_ready_for_combined = bool(bet_targets_to_place)
-    slot2_ready_for_combined = bool(slot2_targets_to_place)
-
-    can_use_combined_post = (
-        combine_slots_in_single_post
-        and place_bets_combined_slots_func is not None
-        and slot1_ready_for_combined
-        and slot2_ready_for_combined
-    )
-
-    if can_use_combined_post:
-        if bet_debug_enabled:
-            print(
-                (
-                    "[DEBUG PROCESS_BET-COMBINED] Вызов combined POST: "
-                    f"slot1={[target.token for target in bet_targets_to_place]} ({bet_amount:.0f}р), "
-                    f"slot2={[t.token for t in slot2_targets_to_place]} ({slot2_amount:.0f}р)"
-                ),
-                flush=True,
+            await place_bets_combined_slots_func(
+                page,
+                slot1_targets=bet_targets_to_place,
+                slot1_amount=bet_amount,
+                slot2_targets=slot2_targets_to_place,
+                slot2_amount=slot2_amount,
             )
-        await place_bets_combined_slots_func(
-            page,
-            slot1_targets=bet_targets_to_place,
-            slot1_amount=bet_amount,
-            slot2_targets=slot2_targets_to_place,
-            slot2_amount=slot2_amount,
-        )
-        return
+            return
 
-    if bet_targets_to_place:
-        await place_bets_func(page, bet_targets_to_place, bet_amount)
-    if slot2_targets_to_place and place_bets_2_func is not None:
-        if bet_debug_enabled:
-            print(
-                f"[DEBUG PROCESS_BET-2] Вызов place_bets_2 для {[t.token for t in slot2_targets_to_place]} по {slot2_amount:.0f}р",
-                flush=True,
-            )
-        await place_bets_2_func(page, slot2_targets_to_place, slot2_amount)
+        if bet_targets_to_place:
+            await place_bets_func(page, bet_targets_to_place, bet_amount)
+        if slot2_targets_to_place and place_bets_2_func is not None:
+            if bet_debug_enabled:
+                print(
+                    f"[DEBUG PROCESS_BET-2] Вызов place_bets_2 для {[t.token for t in slot2_targets_to_place]} по {slot2_amount:.0f}р",
+                    flush=True,
+                )
+            await place_bets_2_func(page, slot2_targets_to_place, slot2_amount)
+    finally:
+        if slot1_fallback_active:
+            _clear_pending_win_confirmation_set_fallback_checks(betting_state)
+        if slot2_fallback_active and betting_state_2 is not None:
+            _clear_pending_win_confirmation_set_fallback_checks(betting_state_2)
