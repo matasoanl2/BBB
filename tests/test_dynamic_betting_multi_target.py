@@ -165,6 +165,32 @@ def test_get_best_combinations_preserves_color_ratio_when_enabled() -> None:
     assert selected_color_counts == {"red": 2, "yellow": 1, "double": 1}
 
 
+def test_get_best_combinations_excludes_overlap_and_backfills_next_ranked_targets() -> None:
+    configured_targets = (
+        BetTarget("red", "1"),
+        BetTarget("yellow", "2"),
+    )
+    runtime_config = _make_runtime_config(configured_targets=configured_targets)
+    runtime_context = _make_runtime_context(configured_targets)
+    stats = {
+        "red_6": {"freq": 50, "frequency": 50.0},
+        "yellow_5": {"freq": 40, "frequency": 40.0},
+        "yellow_4": {"freq": 30, "frequency": 30.0},
+        "red_3": {"freq": 20, "frequency": 20.0},
+    }
+
+    selected_targets, selected_color_counts = get_best_combinations(
+        stats=stats,
+        runtime_context=runtime_context,
+        runtime_config=runtime_config,
+        analyze_all_results_frequency_func=lambda: stats,
+        excluded_tokens={"R6", "Y5"},
+    )
+
+    assert [target.token for target in selected_targets] == ["Y4", "R3"]
+    assert selected_color_counts == {"red": 1, "yellow": 1, "double": 0}
+
+
 def test_update_dynamic_bet_skips_when_recalc_interval_not_reached() -> None:
     configured_targets = (
         BetTarget("red", "1"),

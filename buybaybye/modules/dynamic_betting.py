@@ -204,6 +204,7 @@ def get_best_combinations(
     runtime_context: RuntimeContext,
     runtime_config: RuntimeConfig,
     analyze_all_results_frequency_func,
+    excluded_tokens: set[str] | None = None,
 ) -> tuple[tuple[BetTarget, ...], dict[str, int]]:
     """Выбрать N комбинаций (N=len(BET_TARGETS)) для multi-target dynamic режима.
 
@@ -240,10 +241,12 @@ def get_best_combinations(
         if not selectable_stats:
             return tuple(), {"red": 0, "yellow": 0, "double": 0}
 
+    blocked_tokens = {str(token).strip().upper() for token in (excluded_tokens or set()) if str(token).strip()}
     ranked_keys = [
         combo_key
         for combo_key, _ in sorted(selectable_stats.items(), key=_stats_sort_key, reverse=True)
         if _combo_to_target(combo_key) is not None
+        and _combo_to_target(combo_key).token not in blocked_tokens
     ]
     if not ranked_keys:
         return tuple(), {"red": 0, "yellow": 0, "double": 0}
@@ -389,6 +392,7 @@ def update_dynamic_bet(
     get_best_combination_func,
     format_outcome_pretty_func,
     format_combo_pretty_func,
+    excluded_tokens: set[str] | None = None,
 ) -> tuple[str, str]:
     """Обновить текущую цель ставки, если настал момент dynamic-пересчета."""
 
@@ -453,6 +457,7 @@ def update_dynamic_bet(
             runtime_context=runtime_context,
             runtime_config=runtime_config,
             analyze_all_results_frequency_func=analyze_all_results_frequency_func,
+            excluded_tokens=excluded_tokens,
         )
 
         if not selected_targets:

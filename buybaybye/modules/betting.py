@@ -2941,7 +2941,7 @@ async def process_betting_round(
 
                 if dynamic_multi_effective_2:
                     if update_dynamic_bet_2_func is not None:
-                        update_dynamic_bet_2_func()
+                        update_dynamic_bet_2_func(excluded_tokens=slot1_target_tokens)
                     slot2_dynamic_tokens = list((runtime_context.betting_state_2 or {}).get("dynamic_targets") or [])
                     resolved_dynamic_targets_2 = _resolve_target_tokens(slot2_dynamic_tokens)
                     if resolved_dynamic_targets_2:

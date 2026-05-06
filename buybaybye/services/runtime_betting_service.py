@@ -272,6 +272,7 @@ class BettingRuntimeService:
             get_best_combination_func=self.get_best_combination,
             format_outcome_pretty_func=_format_outcome_pretty,
             format_combo_pretty_func=_format_combo_pretty,
+            excluded_tokens=blocked_tokens,
         )
 
         if blocked_tokens and is_single_target:
@@ -327,6 +328,7 @@ class BettingRuntimeService:
                     get_best_combination_func=self.get_best_combination,
                     format_outcome_pretty_func=_format_outcome_pretty,
                     format_combo_pretty_func=_format_combo_pretty,
+                    excluded_tokens=blocked_tokens,
                 )
             finally:
                 self.runtime_config.dynamic_betting.enabled = original_dynamic_enabled
