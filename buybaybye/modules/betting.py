@@ -374,6 +374,25 @@ def _run_pending_win_confirmation_precheck(
     return confirmation_outcome != "pending"
 
 
+def _finalize_pending_win_confirmation_for_set_calculation_if_ready(
+    *,
+    betting_state: dict,
+    get_db_connection_func,
+    update_runtime_snapshot_func,
+    slot_label: str,
+) -> None:
+    pending_confirmation = betting_state.get("pending_win_confirmation")
+    if not isinstance(pending_confirmation, dict) or not pending_confirmation:
+        return
+
+    _finalize_pending_win_confirmation_if_ready(
+        betting_state=betting_state,
+        get_db_connection_func=get_db_connection_func,
+        update_runtime_snapshot_func=update_runtime_snapshot_func,
+        slot_label=slot_label,
+    )
+
+
 def _set_pending_win_confirmation_set_fallback_checks(betting_state: dict, checks_remaining: int) -> None:
     pending_confirmation = betting_state.get("pending_win_confirmation")
     if isinstance(pending_confirmation, dict) and pending_confirmation:
@@ -2885,6 +2904,13 @@ async def process_betting_round(
         else:
             bet_targets_to_place = configured_targets
 
+        _finalize_pending_win_confirmation_for_set_calculation_if_ready(
+            betting_state=betting_state,
+            get_db_connection_func=get_db_connection_func,
+            update_runtime_snapshot_func=update_runtime_snapshot_func,
+            slot_label="1",
+        )
+
         consecutive_losses = betting_state.get("consecutive_losses", 0)
         random_fallback_enabled = runtime_config.dynamic_betting.random_fallback_enabled
         random_fallback_loss_streak = runtime_config.dynamic_betting.random_fallback_loss_streak
@@ -2960,6 +2986,12 @@ async def process_betting_round(
             slot2_targets = tuple(target for target in slot2_targets if target.token not in slot1_target_tokens)
             if slot2_targets:
                 slot2_targets_to_place = slot2_targets
+                _finalize_pending_win_confirmation_for_set_calculation_if_ready(
+                    betting_state=runtime_context.betting_state_2,
+                    get_db_connection_func=get_db_connection_func,
+                    update_runtime_snapshot_func=update_runtime_snapshot_func,
+                    slot_label="2",
+                )
                 slot2_amount = calculate_bet_amount_2_func()
             else:
                 print(
