@@ -236,15 +236,22 @@ class BettingRuntimeService:
         *,
         stats: dict,
         excluded_tokens: set[str],
+        use_average_value_selection: bool | None = None,
     ) -> tuple[str, str] | None:
         """Найти лучшую single-target цель, не попадающую в excluded_tokens."""
 
         if not stats:
             return None
 
+        if use_average_value_selection is None:
+            use_average_value_selection = self.runtime_config.dynamic_betting.use_average_value_selection
+
         remaining_stats = dict(stats)
         while remaining_stats:
-            outcome, specifier = self.get_best_combination(remaining_stats)
+            if use_average_value_selection:
+                outcome, specifier = self.get_best_combination(remaining_stats)
+            else:
+                outcome, specifier = self._get_best_single_target_by_frequency(remaining_stats)
             token = "D" if outcome == "double" else f"{'R' if outcome == 'red' else 'Y'}{specifier}"
             if token not in excluded_tokens:
                 return outcome, specifier
@@ -255,6 +262,43 @@ class BettingRuntimeService:
             remaining_stats.pop(combo_key, None)
 
         return None
+
+    def _get_best_single_target_by_frequency(self, stats: dict) -> tuple[str, str]:
+        """Выбрать single-target цель по тем же правилам, что и при выключенном average-selection."""
+
+        if not stats:
+            return self.runtime_context.get_current_bet_target()
+
+        selectable_stats = dict(stats)
+        dynamic_config = self.runtime_config.dynamic_betting
+        default_outcome, default_specifier = self.runtime_context.get_current_bet_target()
+
+        if not dynamic_config.include_double_selection:
+            selectable_stats.pop("double", None)
+
+        if dynamic_config.lock_color and default_outcome != "double":
+            selectable_stats = {
+                combo_key: combo_stats
+                for combo_key, combo_stats in selectable_stats.items()
+                if combo_key.startswith(f"{default_outcome}_")
+            }
+
+        if not selectable_stats:
+            return default_outcome, default_specifier
+
+        combo_key, _ = max(
+            selectable_stats.items(),
+            key=lambda item: (
+                float(item[1].get("frequency", 0.0) or 0.0),
+                int(item[1].get("freq", 0) or 0),
+            ),
+        )
+
+        if combo_key == "double":
+            return "double", ""
+
+        outcome, specifier = combo_key.split("_", 1)
+        return outcome, specifier
 
     def update_dynamic_bet(self, excluded_tokens: set[str] | None = None) -> tuple[str, str]:
         """Пересчитать dynamic-цель slot1 и при необходимости уйти от пересечения по top-ranked кандидатам."""
@@ -341,6 +385,7 @@ class BettingRuntimeService:
                     alternative = self._find_non_intersecting_single_target(
                         stats=stats,
                         excluded_tokens=blocked_tokens,
+                        use_average_value_selection=False if self.runtime_config.dynamic_betting.use_average_value_selection else None,
                     )
                     if alternative is not None:
                         alt_outcome, alt_specifier = alternative

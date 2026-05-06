@@ -18,6 +18,7 @@ from buybaybye.core.runtime_config import (
 from buybaybye.core.runtime_context import create_runtime_context
 from buybaybye.core.runtime_state import build_runtime_betting_state
 from buybaybye.modules.dynamic_betting import get_best_combinations, update_dynamic_bet
+from buybaybye.services.runtime_betting_service import BettingRuntimeService
 
 
 def _make_runtime_config(
@@ -106,6 +107,31 @@ def _make_runtime_context(configured_targets: tuple[BetTarget, ...]):
         strategy=None,
         bet_mode_outcome=configured_targets[0].outcome,
         bet_mode_specifier=configured_targets[0].specifier or "5",
+    )
+    return context
+
+
+def _make_runtime_context_with_slot2(
+    configured_targets: tuple[BetTarget, ...],
+    configured_targets_2: tuple[BetTarget, ...],
+):
+    context = _make_runtime_context(configured_targets)
+    context.current_strategy = {"name": "balanced", "coefficients": [1], "payout_coefficient": 5.7}
+    context.betting_state = build_runtime_betting_state(
+        strategy=context.current_strategy,
+        bet_mode_outcome=configured_targets[0].outcome,
+        bet_mode_specifier=configured_targets[0].specifier or "5",
+    )
+    context.current_strategy_2 = {"name": "balanced", "coefficients": [1], "payout_coefficient": 5.7}
+    context.betting_state_2 = build_runtime_betting_state(
+        strategy=context.current_strategy_2,
+        bet_mode_outcome=configured_targets_2[0].outcome,
+        bet_mode_specifier=configured_targets_2[0].specifier or "5",
+    )
+    context.configured_bet_targets_2 = configured_targets_2
+    context.set_current_bet_target_2(
+        configured_targets_2[0].outcome,
+        configured_targets_2[0].specifier or "5",
     )
     return context
 
@@ -348,3 +374,29 @@ def test_update_dynamic_bet_rounds_fallbacks_to_total_bets_when_rounds_not_posit
 
     assert analyze_calls["count"] == 1
     assert runtime_context.betting_state["dynamic_targets"] == ["R6", "Y4"]
+
+
+def test_update_dynamic_bet_2_overlap_uses_non_average_fallback_for_current_round() -> None:
+    configured_targets = (BetTarget("red", "6"),)
+    configured_targets_2 = (BetTarget("yellow", "1"),)
+    runtime_config = _make_runtime_config(configured_targets=configured_targets, multi_target_enabled=False)
+    runtime_config.dynamic_betting.enabled_2 = True
+    runtime_config.dynamic_betting.include_double_selection = False
+    runtime_config.dynamic_betting.use_average_value_selection = True
+    runtime_config.dynamic_betting.lock_color = True
+    runtime_context = _make_runtime_context_with_slot2(configured_targets, configured_targets_2)
+    runtime_context.betting_state_2["total_bets_placed"] = runtime_config.dynamic_betting.recalc_interval
+
+    service = BettingRuntimeService(runtime_context, runtime_config)
+    stats = {
+        "yellow_3": {"freq": 6, "frequency": 30.0},
+        "yellow_5": {"freq": 7, "frequency": 35.0},
+        "red_2": {"freq": 2, "frequency": 10.0},
+    }
+    service.analyze_all_results_frequency = lambda: stats
+
+    outcome, specifier = service.update_dynamic_bet_2(excluded_tokens={"Y4"})
+
+    assert (outcome, specifier) == ("yellow", "5")
+    assert runtime_context.get_current_bet_target_2() == ("yellow", "5")
+    assert runtime_context.betting_state_2["dynamic_targets"] == ["Y5"]
