@@ -59,7 +59,7 @@ def analyze_all_results_frequency(
         if max_timestamp_row and max_timestamp_row[0]:
             max_timestamp = max_timestamp_row[0]
             now = datetime.now(timezone.utc)
-            if (now - max_timestamp).total_seconds() > 3600:  # 1 hour
+            if (now - max_timestamp).total_seconds() > 120:  # 2 minutes
                 # Use session data instead
                 combo_stats = betting_state.combo_stats
                 double_stats = betting_state.double_stats
