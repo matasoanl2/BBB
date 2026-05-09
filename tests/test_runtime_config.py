@@ -109,3 +109,13 @@ def test_load_runtime_config_random_fallback_disabled_by_default(monkeypatch: py
     config = load_runtime_config(Path("."))
 
     assert config.dynamic_betting.random_fallback_enabled is False
+
+
+def test_load_runtime_config_shared_bank_percent_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BET_MAX_STAKE_PERCENT_OF_BANK", "25")
+    monkeypatch.setenv("BET_MAX_STAKE_PERCENT_OF_BANK_SHARED", "true")
+
+    config = load_runtime_config(Path("."))
+
+    assert config.betting.max_stake_percent_of_bank == 25.0
+    assert config.betting.max_stake_percent_of_bank_shared is True

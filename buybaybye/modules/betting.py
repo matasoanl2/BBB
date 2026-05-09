@@ -450,6 +450,7 @@ async def _wait_briefly_for_pending_win_confirmation(
         await asyncio.sleep(min(PENDING_WIN_CONFIRMATION_POLL_SECONDS, remaining_seconds))
         confirmation_outcome = _finalize_pending_win_confirmation_if_ready(
             betting_state=betting_state,
+            runtime_config=runtime_config,
             get_db_connection_func=get_db_connection_func,
             update_runtime_snapshot_func=update_runtime_snapshot_func,
             slot_label=slot_label,
@@ -607,6 +608,7 @@ def _run_set_precheck_for_slot(
     update_runtime_snapshot_func,
     required_bank_base_bet: float,
     resume_base_bet: float,
+    available_balance_override: float | None = None,
 ) -> tuple[bool, tuple[BetTarget, ...], float]:
     betting_config = runtime_config.betting
     normalized_targets = tuple(bet_targets)
@@ -868,9 +870,17 @@ def _run_set_precheck_for_slot(
                 )
             return False, (), amount
 
+    effective_balance = available_balance
+    if available_balance_override is not None:
+        effective_balance = (
+            available_balance_override
+            if available_balance is None
+            else min(available_balance, available_balance_override)
+        )
+
     max_stake_percent_of_bank = float(getattr(betting_config, "max_stake_percent_of_bank", 0.0) or 0.0)
-    if max_stake_percent_of_bank > 0 and available_balance is not None and required_bank_units > 5:
-        max_allowed_amount = available_balance * (max_stake_percent_of_bank / 100.0)
+    if max_stake_percent_of_bank > 0 and effective_balance is not None and required_bank_units > 5:
+        max_allowed_amount = effective_balance * (max_stake_percent_of_bank / 100.0)
         if amount > max_allowed_amount + 1e-9:
             coefficients = (current_strategy or {}).get("coefficients", [1])
             first_coefficient = float(coefficients[0]) if coefficients else 1.0
@@ -905,7 +915,7 @@ def _run_set_precheck_for_slot(
                 },
             )
 
-    if available_balance is None:
+    if effective_balance is None:
         if was_low_balance_paused:
             return False, (), amount
         if betting_config.debug_enabled and betting_state.get("total_bets_placed", 0) == 0:
@@ -915,7 +925,7 @@ def _run_set_precheck_for_slot(
     affordable_targets = _get_affordable_bet_targets(
         bet_targets=normalized_targets,
         amount=amount,
-        available_balance=available_balance,
+        available_balance=effective_balance,
     )
     if not affordable_targets:
         pause_changed = _set_low_balance_pause_state(
@@ -3018,6 +3028,17 @@ async def process_betting_round(
         slot2_targets_to_place: tuple[BetTarget, ...] = ()
         slot2_amount = 0.0
 
+        shared_balance_for_slots = _normalize_account_balance((runtime_context.betting_state or {}).get("account_balance"))
+        shared_percent_limit_balance: float | None = None
+        if (
+            bool(getattr(runtime_config.betting, "max_stake_percent_of_bank_shared", False))
+            and shared_balance_for_slots is not None
+            and float(getattr(runtime_config.betting, "max_stake_percent_of_bank", 0.0) or 0.0) > 0
+        ):
+            shared_percent_limit_balance = shared_balance_for_slots * (
+                float(getattr(runtime_config.betting, "max_stake_percent_of_bank", 0.0) or 0.0) / 100.0
+            )
+
         if place_bets_2_func is not None and calculate_bet_amount_2_func is not None:
             slot1_target_tokens = {target.token for target in bet_targets_to_place}
             slot2_targets = runtime_context.get_configured_bet_targets_2()
@@ -3106,6 +3127,7 @@ async def process_betting_round(
                 update_runtime_snapshot_func=update_runtime_snapshot_func,
                 required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
                 resume_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
+                available_balance_override=shared_percent_limit_balance,
             )
             if slot1_precheck_ok:
                 bet_targets_to_place = slot1_effective_targets
@@ -3121,6 +3143,11 @@ async def process_betting_round(
                         * 100
                     )
                 return 0.0
+
+            slot2_balance_override = shared_percent_limit_balance
+            if slot1_precheck_ok and shared_percent_limit_balance is not None:
+                slot1_total_amount = float(slot1_effective_amount) * float(len(slot1_effective_targets))
+                slot2_balance_override = max(0.0, shared_percent_limit_balance - slot1_total_amount)
 
             slot2_precheck_ok, slot2_effective_targets, slot2_effective_amount = _run_set_precheck_for_slot(
                 betting_state=runtime_context.betting_state_2,
@@ -3141,6 +3168,7 @@ async def process_betting_round(
                 update_runtime_snapshot_func=update_runtime_snapshot_func,
                 required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
                 resume_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
+                available_balance_override=slot2_balance_override,
             )
             if slot2_precheck_ok:
                 slot2_targets_to_place = slot2_effective_targets
@@ -3151,6 +3179,9 @@ async def process_betting_round(
             slot1_ready_for_combined = bool(bet_targets_to_place)
             slot2_ready_for_combined = bool(slot2_targets_to_place)
         else:
+            slot1_precheck_ok = False
+            slot1_effective_targets: tuple[BetTarget, ...] = ()
+            slot1_effective_amount = 0.0
             if bet_targets_to_place:
                 slot1_step_for_history = int((runtime_context.betting_state or {}).get("current_step", 0) or 0)
                 slot1_max_steps = len((runtime_context.current_strategy or {}).get("coefficients", [1])) if runtime_context.current_strategy else 15
@@ -3174,6 +3205,7 @@ async def process_betting_round(
                     update_runtime_snapshot_func=update_runtime_snapshot_func,
                     required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
                     resume_base_bet=float(getattr(runtime_config.betting, "base_bet", 0.0) or 0.0),
+                    available_balance_override=shared_percent_limit_balance,
                 )
                 if slot1_precheck_ok:
                     bet_targets_to_place = slot1_effective_targets
@@ -3194,6 +3226,11 @@ async def process_betting_round(
                 slot2_step_for_history = int((runtime_context.betting_state_2 or {}).get("current_step", 0) or 0)
                 slot2_max_steps = len((runtime_context.current_strategy_2 or {}).get("coefficients", [1])) if runtime_context.current_strategy_2 else 15
                 slot2_round_display = str(int((runtime_context.betting_state_2 or {}).get("total_bet_rounds", 0) or 0) + 1).zfill(3)
+                slot2_balance_override = shared_percent_limit_balance
+                if slot1_precheck_ok and shared_percent_limit_balance is not None:
+                    slot1_total_amount = float(slot1_effective_amount) * float(len(slot1_effective_targets))
+                    slot2_balance_override = max(0.0, shared_percent_limit_balance - slot1_total_amount)
+
                 slot2_precheck_ok, slot2_effective_targets, slot2_effective_amount = _run_set_precheck_for_slot(
                     betting_state=runtime_context.betting_state_2,
                     current_strategy=runtime_context.current_strategy_2 or {},
@@ -3213,6 +3250,7 @@ async def process_betting_round(
                     update_runtime_snapshot_func=update_runtime_snapshot_func,
                     required_bank_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
                     resume_base_bet=float(getattr(runtime_config.betting, "base_bet_2", 0.0) or 0.0),
+                    available_balance_override=slot2_balance_override,
                 )
                 if slot2_precheck_ok:
                     slot2_targets_to_place = slot2_effective_targets

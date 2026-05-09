@@ -348,6 +348,78 @@ def test_process_round_waits_for_fresh_accounting_update_then_keeps_only_one_slo
     assert runtime_context.betting_state_2["low_balance_pause_active"] is False
 
 
+def test_process_round_applies_shared_percent_limit_across_slots() -> None:
+    runtime_config = _make_runtime_config(combine_slots_in_single_post=True)
+    runtime_config.betting.max_stake_percent_of_bank = 10.0
+    runtime_config.betting.max_stake_percent_of_bank_shared = True
+
+    runtime_context = _make_runtime_context()
+    runtime_context.betting_state["account_balance"] = 1000.0
+    runtime_context.betting_state["account_balance_updated_at"] = datetime.now(timezone.utc).isoformat()
+    runtime_context.betting_state_2["account_balance"] = 1000.0
+    runtime_context.betting_state_2["account_balance_updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    slot1_calls: list[tuple[list[str], float]] = []
+    slot2_calls: list[tuple[list[str], float]] = []
+    combined_calls: list[tuple[list[str], float, list[str], float]] = []
+
+    async def _place_bets_stub(page, targets, amount):
+        slot1_calls.append(([target.token for target in targets], amount))
+        return True
+
+    async def _place_bets_2_stub(page, targets, amount):
+        slot2_calls.append(([target.token for target in targets], amount))
+        return True
+
+    async def _place_bets_combined_stub(page, *, slot1_targets, slot1_amount, slot2_targets, slot2_amount):
+        combined_calls.append(
+            ([target.token for target in slot1_targets], slot1_amount, [target.token for target in slot2_targets], slot2_amount)
+        )
+        return True
+
+    async def _run_once() -> None:
+        await process_betting_round(
+            page=None,
+            payload=json.dumps(
+                {
+                    "status": "rng_values",
+                    "game_id": "game-1",
+                    "results": {
+                        "dice": [{"color": "red", "value": 1}, {"color": "yellow", "value": 2}],
+                        "player": {"name": "tester", "position": "left"},
+                    },
+                }
+            ),
+            runtime_context=runtime_context,
+            runtime_config=runtime_config,
+            format_ws_payload_func=lambda value: value,
+            get_db_connection_func=lambda: None,
+            format_round_result_pretty_func=lambda dice: "R1,Y2",
+            format_outcome_pretty_func=lambda outcome, specifier: f"{outcome}:{specifier or 'D'}",
+            format_bet_log_func=_format_bet_log_stub,
+            get_balance_for_log_func=lambda: "1000р",
+            calculate_roi_func=lambda: 0.0,
+            update_runtime_snapshot_func=lambda *args, **kwargs: None,
+            print_session_stats_func=lambda *args, **kwargs: None,
+            print_dice_stats_20_func=lambda *args, **kwargs: None,
+            update_dynamic_bet_func=lambda *args, **kwargs: None,
+            update_dynamic_bet_2_func=lambda *args, **kwargs: None,
+            generate_random_bet_func=lambda: ("red", "1"),
+            calculate_bet_amount_func=lambda: 100.0,
+            place_bet_func=lambda *args, **kwargs: None,
+            place_bets_func=_place_bets_stub,
+            place_bets_combined_slots_func=_place_bets_combined_stub,
+            calculate_bet_amount_2_func=lambda: 100.0,
+            place_bets_2_func=_place_bets_2_stub,
+        )
+
+    asyncio.run(_run_once())
+
+    assert slot1_calls == [(["R1"], 100.0)]
+    assert slot2_calls == []
+    assert combined_calls == []
+
+
 def test_process_round_passes_slot1_exclusions_into_slot2_dynamic_multi_target() -> None:
     runtime_config = _make_runtime_config()
     runtime_config.dynamic_betting.enabled_2 = True

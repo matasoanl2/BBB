@@ -122,6 +122,7 @@ class BettingConfig:
     debug_enabled: bool
     post_log_enabled: bool
     combine_slots_in_single_post: bool
+    max_stake_percent_of_bank_shared: bool = False
     pending_win_confirmation_enabled: bool = True
     # Вторичный слот ставок (STRATEGY_2 / BASE_BET_2 / BET_TARGETS_2)
     strategy_name_2: str = ""
@@ -350,6 +351,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             stop_at_balance=float(os.getenv("STOP_AT_BALANCE", "0")),
             stop_at_balance_resume_check_seconds=float(os.getenv("STOP_AT_BALANCE_RESUME_CHECK_SECONDS", "300")),
             max_stake_percent_of_bank=float(os.getenv("BET_MAX_STAKE_PERCENT_OF_BANK", "0")),
+            max_stake_percent_of_bank_shared=_env_bool("BET_MAX_STAKE_PERCENT_OF_BANK_SHARED", "false"),
             strategy_name=os.getenv("STRATEGY", "balanced"),
             bet_delay_min=float(os.getenv("BET_DELAY_MIN", "0.8")),
             bet_delay_max=float(os.getenv("BET_DELAY_MAX", "1.5")),
