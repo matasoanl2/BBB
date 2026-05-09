@@ -22,7 +22,7 @@ from buybaybye.modules.accounting import update_balance_from_accounting_payload
 from buybaybye.modules.betting import _run_set_precheck_for_slot, process_betting_round
 
 
-def _make_runtime_config(*, combine_slots_in_single_post: bool = False) -> RuntimeConfig:
+def _make_runtime_config(*, combine_slots_in_single_post: bool = False, pending_win_confirmation_enabled: bool = True) -> RuntimeConfig:
     configured_targets = (BetTarget("red", "1"),)
     configured_targets_2 = (BetTarget("yellow", "2"),)
     return RuntimeConfig(
@@ -59,6 +59,7 @@ def _make_runtime_config(*, combine_slots_in_single_post: bool = False) -> Runti
             bet_delay_max=0.0,
             debug_enabled=False,
             post_log_enabled=False,
+            pending_win_confirmation_enabled=pending_win_confirmation_enabled,
             combine_slots_in_single_post=combine_slots_in_single_post,
             strategy_name_2="balanced",
             base_bet_2=10.0,

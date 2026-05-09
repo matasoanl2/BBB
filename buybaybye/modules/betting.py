@@ -237,6 +237,10 @@ def _refresh_reconciliation_phase(betting_state: dict) -> None:
         betting_state["reconciliation_phase"] = "idle"
 
 
+def _pending_win_confirmation_is_enabled(runtime_config: RuntimeConfig) -> bool:
+    return bool(getattr(runtime_config.betting, "pending_win_confirmation_enabled", True))
+
+
 def _get_pending_win_confirmation_outcome(betting_state: dict) -> str:
     pending_confirmation = betting_state.get("pending_win_confirmation")
     if not isinstance(pending_confirmation, dict) or not pending_confirmation:
@@ -267,10 +271,19 @@ def _get_pending_win_confirmation_outcome(betting_state: dict) -> str:
 def _finalize_pending_win_confirmation_if_ready(
     *,
     betting_state: dict,
+    runtime_config: RuntimeConfig,
     get_db_connection_func,
     update_runtime_snapshot_func,
     slot_label: str,
 ) -> str:
+    if not _pending_win_confirmation_is_enabled(runtime_config):
+        pending_confirmation = betting_state.get("pending_win_confirmation") or {}
+        if isinstance(pending_confirmation, dict):
+            betting_state["pending_win_confirmation"] = None
+            betting_state["pending_expected_settlement_credit"] = 0.0
+            betting_state["reconciliation_phase"] = "idle"
+        return "confirmed"
+
     confirmation_outcome = _get_pending_win_confirmation_outcome(betting_state)
     if confirmation_outcome not in {"confirmed", FALSE_WIN_STATUS}:
         return confirmation_outcome
@@ -355,12 +368,14 @@ def _finalize_pending_win_confirmation_if_ready(
 def _run_pending_win_confirmation_precheck(
     *,
     betting_state: dict,
+    runtime_config: RuntimeConfig,
     get_db_connection_func,
     update_runtime_snapshot_func,
     slot_label: str,
 ) -> bool:
     confirmation_outcome = _finalize_pending_win_confirmation_if_ready(
         betting_state=betting_state,
+        runtime_config=runtime_config,
         get_db_connection_func=get_db_connection_func,
         update_runtime_snapshot_func=update_runtime_snapshot_func,
         slot_label=slot_label,
@@ -377,6 +392,7 @@ def _run_pending_win_confirmation_precheck(
 def _finalize_pending_win_confirmation_for_set_calculation_if_ready(
     *,
     betting_state: dict,
+    runtime_config: RuntimeConfig,
     get_db_connection_func,
     update_runtime_snapshot_func,
     slot_label: str,
@@ -387,6 +403,7 @@ def _finalize_pending_win_confirmation_for_set_calculation_if_ready(
 
     _finalize_pending_win_confirmation_if_ready(
         betting_state=betting_state,
+        runtime_config=runtime_config,
         get_db_connection_func=get_db_connection_func,
         update_runtime_snapshot_func=update_runtime_snapshot_func,
         slot_label=slot_label,
@@ -408,12 +425,14 @@ def _clear_pending_win_confirmation_set_fallback_checks(betting_state: dict) -> 
 async def _wait_briefly_for_pending_win_confirmation(
     *,
     betting_state: dict,
+    runtime_config: RuntimeConfig,
     get_db_connection_func,
     update_runtime_snapshot_func,
     slot_label: str,
 ) -> str:
     confirmation_outcome = _finalize_pending_win_confirmation_if_ready(
         betting_state=betting_state,
+        runtime_config=runtime_config,
         get_db_connection_func=get_db_connection_func,
         update_runtime_snapshot_func=update_runtime_snapshot_func,
         slot_label=slot_label,
@@ -596,6 +615,7 @@ def _run_set_precheck_for_slot(
 
     if not _run_pending_win_confirmation_precheck(
         betting_state=betting_state,
+        runtime_config=runtime_config,
         get_db_connection_func=get_db_connection_func,
         update_runtime_snapshot_func=update_runtime_snapshot_func,
         slot_label=slot_label,
@@ -627,6 +647,14 @@ def _run_set_precheck_for_slot(
                 last_check_at = datetime.fromisoformat(last_check_raw)
                 check_due = (now_utc - last_check_at).total_seconds() >= stop_at_balance_resume_check_seconds
             except ValueError:
+                check_due = True
+
+        if not check_due:
+            if (
+                available_balance is not None
+                and last_observed_balance is not None
+                and available_balance < last_observed_balance
+            ) or betting_state.get("last_external_balance_change_type") == "withdrawal":
                 check_due = True
 
         if not check_due:
@@ -1055,6 +1083,7 @@ async def place_bets(
     try:
         if not _run_pending_win_confirmation_precheck(
             betting_state=betting_state,
+            runtime_config=runtime_config,
             get_db_connection_func=get_db_connection_func,
             update_runtime_snapshot_func=update_runtime_snapshot_func,
             slot_label=slot_label,
@@ -1085,6 +1114,14 @@ async def place_bets(
                     last_check_at = datetime.fromisoformat(last_check_raw)
                     check_due = (now_utc - last_check_at).total_seconds() >= stop_at_balance_resume_check_seconds
                 except ValueError:
+                    check_due = True
+
+            if not check_due:
+                if (
+                    available_balance is not None
+                    and last_observed_balance is not None
+                    and available_balance < last_observed_balance
+                ) or betting_state.get("last_external_balance_change_type") == "withdrawal":
                     check_due = True
 
             if not check_due:
@@ -2626,18 +2663,28 @@ async def process_betting_round(
 
             restarted = False
             if round_margin > 0:
-                betting_state["pending_win_confirmation"] = {
-                    "recorded_at": datetime.now(timezone.utc).isoformat(),
-                    "expected_settlement_credit": settlement_credit,
-                    "round_margin": round_margin,
-                    "max_steps": max_steps,
-                    "current_step_before_resolution": current_step_for_log,
-                    "consecutive_losses_before_resolution": previous_consecutive_losses,
-                    "history_ids": history_ids,
-                    "resolved_target_tokens": resolved_target_tokens,
-                    "result_display": actual_dice_representation,
-                }
-                betting_state["last_set_status"] = WIN_PENDING_CONFIRMATION_STATUS
+                if _pending_win_confirmation_is_enabled(runtime_config):
+                    betting_state["pending_win_confirmation"] = {
+                        "recorded_at": datetime.now(timezone.utc).isoformat(),
+                        "expected_settlement_credit": settlement_credit,
+                        "round_margin": round_margin,
+                        "max_steps": max_steps,
+                        "current_step_before_resolution": current_step_for_log,
+                        "consecutive_losses_before_resolution": previous_consecutive_losses,
+                        "history_ids": history_ids,
+                        "resolved_target_tokens": resolved_target_tokens,
+                        "result_display": actual_dice_representation,
+                    }
+                    betting_state["last_set_status"] = WIN_PENDING_CONFIRMATION_STATUS
+                else:
+                    betting_state["pending_win_confirmation"] = None
+                    betting_state["pending_expected_settlement_credit"] = 0.0
+                    betting_state["reconciliation_phase"] = "idle"
+                    betting_state["current_step"] = 0
+                    betting_state["consecutive_losses"] = 0
+                    betting_state["last_set_status"] = "win"
+                    betting_state["total_profit"] += round_margin
+                    betting_state["session_balance"] += round_margin
             elif current_step_for_log + 1 >= max_steps:
                 betting_state["current_step"] = 0
                 betting_state["consecutive_losses"] = 0
@@ -2651,7 +2698,7 @@ async def process_betting_round(
             balance_for_log = betting_state["session_balance"]
             bet_result_status = "loss"
             if round_margin > 0:
-                bet_result_status = WIN_PENDING_CONFIRMATION_STATUS
+                bet_result_status = WIN_PENDING_CONFIRMATION_STATUS if _pending_win_confirmation_is_enabled(runtime_config) else "win"
             else:
                 betting_state["total_profit"] += round_margin
                 betting_state["session_balance"] += round_margin
@@ -2755,18 +2802,28 @@ async def process_betting_round(
 
                 restarted_2 = False
                 if round_margin_2 > 0:
-                    betting_state_2["pending_win_confirmation"] = {
-                        "recorded_at": datetime.now(timezone.utc).isoformat(),
-                        "expected_settlement_credit": settlement_credit_2,
-                        "round_margin": round_margin_2,
-                        "max_steps": max_steps_2,
-                        "current_step_before_resolution": current_step_2,
-                        "consecutive_losses_before_resolution": previous_consecutive_losses_2,
-                        "history_ids": history_ids_2,
-                        "resolved_target_tokens": [pending_bet.get("token") for pending_bet in pending_bets_2 if pending_bet.get("token")],
-                        "result_display": actual_dice_representation,
-                    }
-                    betting_state_2["last_set_status"] = WIN_PENDING_CONFIRMATION_STATUS
+                    if _pending_win_confirmation_is_enabled(runtime_config):
+                        betting_state_2["pending_win_confirmation"] = {
+                            "recorded_at": datetime.now(timezone.utc).isoformat(),
+                            "expected_settlement_credit": settlement_credit_2,
+                            "round_margin": round_margin_2,
+                            "max_steps": max_steps_2,
+                            "current_step_before_resolution": current_step_2,
+                            "consecutive_losses_before_resolution": previous_consecutive_losses_2,
+                            "history_ids": history_ids_2,
+                            "resolved_target_tokens": [pending_bet.get("token") for pending_bet in pending_bets_2 if pending_bet.get("token")],
+                            "result_display": actual_dice_representation,
+                        }
+                        betting_state_2["last_set_status"] = WIN_PENDING_CONFIRMATION_STATUS
+                    else:
+                        betting_state_2["pending_win_confirmation"] = None
+                        betting_state_2["pending_expected_settlement_credit"] = 0.0
+                        betting_state_2["reconciliation_phase"] = "idle"
+                        betting_state_2["current_step"] = 0
+                        betting_state_2["consecutive_losses"] = 0
+                        betting_state_2["last_set_status"] = "win"
+                        betting_state_2["total_profit"] += round_margin_2
+                        betting_state_2["session_balance"] += round_margin_2
                 elif current_step_2 + 1 >= max_steps_2:
                     betting_state_2["current_step"] = 0
                     betting_state_2["consecutive_losses"] = 0
@@ -2818,6 +2875,7 @@ async def process_betting_round(
     if isinstance(pending_confirmation, dict) and pending_confirmation:
         slot1_confirmation_outcome = await _wait_briefly_for_pending_win_confirmation(
             betting_state=betting_state,
+            runtime_config=runtime_config,
             get_db_connection_func=get_db_connection_func,
             update_runtime_snapshot_func=update_runtime_snapshot_func,
             slot_label="1",
@@ -2837,6 +2895,7 @@ async def process_betting_round(
         if isinstance(pending_confirmation_2, dict) and pending_confirmation_2:
             slot2_confirmation_outcome = await _wait_briefly_for_pending_win_confirmation(
                 betting_state=betting_state_2,
+                runtime_config=runtime_config,
                 get_db_connection_func=get_db_connection_func,
                 update_runtime_snapshot_func=update_runtime_snapshot_func,
                 slot_label="2",
@@ -2854,6 +2913,7 @@ async def process_betting_round(
     try:
         if slot1_process_level_precheck_required and not _run_pending_win_confirmation_precheck(
             betting_state=betting_state,
+            runtime_config=runtime_config,
             get_db_connection_func=get_db_connection_func,
             update_runtime_snapshot_func=update_runtime_snapshot_func,
             slot_label="1",
@@ -2867,6 +2927,7 @@ async def process_betting_round(
             and slot2_process_level_precheck_required
             and not _run_pending_win_confirmation_precheck(
                 betting_state=betting_state_2,
+                runtime_config=runtime_config,
                 get_db_connection_func=get_db_connection_func,
                 update_runtime_snapshot_func=update_runtime_snapshot_func,
                 slot_label="2",
@@ -2906,6 +2967,7 @@ async def process_betting_round(
 
         _finalize_pending_win_confirmation_for_set_calculation_if_ready(
             betting_state=betting_state,
+            runtime_config=runtime_config,
             get_db_connection_func=get_db_connection_func,
             update_runtime_snapshot_func=update_runtime_snapshot_func,
             slot_label="1",
@@ -2988,6 +3050,7 @@ async def process_betting_round(
                 slot2_targets_to_place = slot2_targets
                 _finalize_pending_win_confirmation_for_set_calculation_if_ready(
                     betting_state=runtime_context.betting_state_2,
+                    runtime_config=runtime_config,
                     get_db_connection_func=get_db_connection_func,
                     update_runtime_snapshot_func=update_runtime_snapshot_func,
                     slot_label="2",
