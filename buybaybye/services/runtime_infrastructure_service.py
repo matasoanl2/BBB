@@ -47,6 +47,7 @@ class InfrastructureRuntimeService:
         _db_save_target_ws_message(
             payload_text=self.format_ws_payload(payload),
             get_db_connection_func=self.get_db_connection,
+            debug_enabled=self.runtime_config.betting.debug_enabled,
         )
 
     def build_runtime_snapshot(self, *, event_type: str = "heartbeat", extra: dict | None = None, is_account_balance_stale_func) -> dict:

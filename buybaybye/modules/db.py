@@ -154,7 +154,7 @@ def get_db_connection(*, database_config: DatabaseConfig):
     )
 
 
-def save_target_ws_message(*, payload_text: str, get_db_connection_func) -> None:
+def save_target_ws_message(*, payload_text: str, get_db_connection_func, debug_enabled: bool = False) -> None:
     """Сохранить одно rng_values websocket-сообщение в PostgreSQL."""
     import json
 
@@ -193,5 +193,11 @@ def save_target_ws_message(*, payload_text: str, get_db_connection_func) -> None
         conn.commit()
         cursor.close()
         conn.close()
+
+        if debug_enabled:
+            position = results.get("player", {}).get("position", "unknown")
+            dice_results = results.get("dice", [])
+            dice_representation = str([d.get("value", "?") for d in dice_results]) if dice_results else "unknown"
+            print(f"[COLLECTOR] Сохранён раунд game_id={game_id}, игрок={player_name}, сторона={position}, кубики={dice_representation}.", flush=True)
     except Exception as exc:
         print(f"[DB ERROR] Ошибка сохранения в БД: {exc}", flush=True)

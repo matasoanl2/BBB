@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 import psycopg2
 import random
+from datetime import datetime, timezone
 
 from buybaybye.core.runtime_context import RuntimeContext
 from buybaybye.core.runtime_config import BetTarget, RuntimeConfig
@@ -51,6 +52,33 @@ def analyze_all_results_frequency(
             database=database_config.name,
         )
         cursor = conn.cursor()
+
+        # Check if game_results data is stale (older than 1 hour)
+        cursor.execute("SELECT MAX(timestamp) FROM game_results")
+        max_timestamp_row = cursor.fetchone()
+        if max_timestamp_row and max_timestamp_row[0]:
+            max_timestamp = max_timestamp_row[0]
+            now = datetime.now(timezone.utc)
+            if (now - max_timestamp).total_seconds() > 3600:  # 1 hour
+                # Use session data instead
+                combo_stats = betting_state.combo_stats
+                double_stats = betting_state.double_stats
+                total_rounds = sum(combo_stats.values()) // 2  # Each round contributes 2 combos (red and yellow)
+                if total_rounds == 0:
+                    cursor.close()
+                    conn.close()
+                    return {}
+                stats = {}
+                for combo, freq in combo_stats.items():
+                    stats[combo] = {"freq": freq, "frequency": (freq / total_rounds) * 100}
+                doubles = double_stats.get("doubles", 0)
+                if doubles > 0:
+                    stats["double"] = {"freq": doubles, "frequency": (doubles / total_rounds) * 100}
+                cursor.close()
+                conn.close()
+                if bet_debug_enabled:
+                    print(f"[DEBUG DYNAMIC] Using session data: total_rounds={total_rounds}, combos={len(stats)}", flush=True)
+                return stats
 
         current_player_name = betting_state.get("last_round_player_name")
         current_position = betting_state.get("last_round_position")
