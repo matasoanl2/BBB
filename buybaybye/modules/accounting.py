@@ -83,7 +83,7 @@ def record_accounting_rejection(
         print(f"[ACCOUNTING][SKIP] {reason}{preview}", flush=True)
 
 
-def get_balance_for_log(*, runtime_context: RuntimeContext, is_account_balance_stale_func) -> str:
+def get_balance_for_log(*, runtime_context: RuntimeContext, runtime_config: RuntimeConfig, is_account_balance_stale_func) -> str:
     """Вернуть строку баланса для логов с маркером устаревшего real balance."""
 
     betting_state = runtime_context.betting_state
@@ -368,10 +368,58 @@ def update_balance_from_accounting_payload(
     betting_state["account_balance_type"] = normalized_balance_type
     betting_state["account_balance_updated_at"] = datetime.now(timezone.utc).isoformat()
     betting_state["last_accounting_rejection_reason"] = None
+
+    # Deposit mode logic
+    if runtime_config.accounting.deposit_mode_enabled:
+        saved_real_balance = betting_state.get("saved_real_balance", 0.0)
+        deposit_balance = betting_state.get("deposit_balance", 0.0)
+        base_deposit = runtime_config.accounting.base_deposit
+        transfer_to_bank = runtime_config.accounting.transfer_to_bank_deposit
+
+        if saved_real_balance == 0.0 and deposit_balance == 0.0:
+            # First initialization
+            if new_balance >= base_deposit:
+                saved_real_balance = new_balance - base_deposit
+                deposit_balance = base_deposit
+            else:
+                saved_real_balance = 0.0
+                deposit_balance = new_balance
+            if runtime_config.betting.debug_enabled:
+                print(f"[ACCOUNTING][DEPOSIT] Инициализация: saved_real={saved_real_balance:.0f}р, deposit={deposit_balance:.0f}р, total={new_balance:.0f}р", flush=True)
+        else:
+            # Calculate delta
+            expected_total = saved_real_balance + deposit_balance
+            delta = new_balance - expected_total
+            if delta != 0:
+                # All balance changes (win/loss) affect deposit_balance
+                deposit_balance += delta
+                # Ensure deposit_balance never goes negative (loss larger than available)
+                if deposit_balance < 0:
+                    loss_from_real = abs(deposit_balance)
+                    saved_real_balance -= loss_from_real
+                    deposit_balance = 0.0
+                    if saved_real_balance < 0:
+                        saved_real_balance = 0.0
+                if runtime_config.betting.debug_enabled:
+                    change_type = "выигрыш" if delta > 0 else "проигрыш"
+                    print(f"[ACCOUNTING][DEPOSIT] {change_type}: {delta:+.0f}р на депозит, deposit={deposit_balance:.0f}р, saved_real={saved_real_balance:.0f}р", flush=True)
+
+        # Auto-transfer if deposit exceeds threshold
+        if deposit_balance >= transfer_to_bank:
+            transfer_amount = transfer_to_bank
+            saved_real_balance += transfer_amount
+            deposit_balance -= transfer_amount
+            if runtime_config.betting.debug_enabled:
+                print(f"[ACCOUNTING][DEPOSIT] Трансфер: {transfer_amount:.0f}р с депозита на real, saved_real={saved_real_balance:.0f}р, deposit={deposit_balance:.0f}р", flush=True)
+
+        betting_state["saved_real_balance"] = saved_real_balance
+        betting_state["deposit_balance"] = deposit_balance
+
     update_runtime_snapshot_func(
         "balance_update",
         {
-            "account_balance": new_balance,
+            "account_balance": betting_state["account_balance"],
+            "deposit_balance": betting_state.get("deposit_balance", 0.0),
             "withdrawal_detected": withdrawal_detected,
             "withdrawal_amount": withdrawal_amount,
             "deposit_detected": deposit_detected,

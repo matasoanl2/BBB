@@ -47,6 +47,7 @@ def build_runtime_snapshot(
         "consecutive_losses": betting_state.get("consecutive_losses") if betting_state else 0,
         "session_balance": betting_state.get("session_balance") if betting_state else 0.0,
         "account_balance": betting_state.get("account_balance") if betting_state else None,
+        "deposit_balance": betting_state.get("deposit_balance") if betting_state else 0.0,
         "account_balance_updated_at": betting_state.get("account_balance_updated_at") if betting_state else None,
         "last_accounting_ws_message_at": betting_state.get("last_accounting_ws_message_at") if betting_state else None,
         "last_accounting_ws_opened_at": betting_state.get("last_accounting_ws_opened_at") if betting_state else None,

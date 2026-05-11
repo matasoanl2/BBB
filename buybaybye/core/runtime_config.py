@@ -131,6 +131,10 @@ class BettingConfig:
     configured_targets_raw_2: str = ""
     configured_targets_error_2: str | None = None
     secondary_enabled: bool = False
+    # Режим депозитного баланса
+    deposit_mode_enabled: bool = False
+    base_deposit: float = 0.0
+    transfer_to_bank_deposit: float = 0.0
 
 
 @dataclass(slots=True)
@@ -166,6 +170,9 @@ class AccountingConfig:
     # Poll interval for accounting_ws health monitoring.
     monitor_poll_seconds: float
     debug_rejected_messages: bool
+    deposit_mode_enabled: bool
+    base_deposit: float
+    transfer_to_bank_deposit: float
 
 
 @dataclass(slots=True)
@@ -254,6 +261,10 @@ def validate_runtime_config(config: RuntimeConfig) -> None:
         raise ValueError("[ERROR] ACCOUNTING_PAGE_CRASH_RESTART_THRESHOLD должен быть больше 0.")
     if config.accounting.monitor_poll_seconds <= 0:
         raise ValueError("[ERROR] ACCOUNTING_MONITOR_POLL_SECONDS должен быть больше 0.")
+    if config.accounting.deposit_mode_enabled and config.accounting.base_deposit <= 0:
+        raise ValueError("[ERROR] BASE_DEPOSIT должен быть положительным числом, если DEPOSIT_MODE_ENABLED.")
+    if config.accounting.deposit_mode_enabled and config.accounting.transfer_to_bank_deposit < 0:
+        raise ValueError("[ERROR] TRANSFER_TO_BANK_DEPOSIT не может быть отрицательным, если DEPOSIT_MODE_ENABLED.")
     if config.telegram.request_timeout_seconds <= 0:
         raise ValueError("[ERROR] TELEGRAM_REQUEST_TIMEOUT_SECONDS должен быть больше 0.")
     if config.telegram.notification_cooldown_seconds < 0:
@@ -365,6 +376,9 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             configured_targets_raw_2=raw_bet_targets_2,
             configured_targets_error_2=configured_targets_error_2,
             secondary_enabled=secondary_enabled,
+            deposit_mode_enabled=_env_bool("DEPOSIT_MODE_ENABLED", "false"),
+            base_deposit=float(os.getenv("BASE_DEPOSIT", "100")),
+            transfer_to_bank_deposit=float(os.getenv("TRANSFER_TO_BANK_DEPOSIT", "1000")),
         ),
         dynamic_betting=DynamicBettingConfig(
             enabled=_env_bool("DYNAMIC_BET_MODE"),
@@ -393,6 +407,9 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             page_crash_restart_threshold=max(1, int(os.getenv("ACCOUNTING_PAGE_CRASH_RESTART_THRESHOLD", "3"))),
             monitor_poll_seconds=float(os.getenv("ACCOUNTING_MONITOR_POLL_SECONDS", "3")),
             debug_rejected_messages=_env_bool("ACCOUNTING_DEBUG_REJECTED_MESSAGES"),
+            deposit_mode_enabled=_env_bool("DEPOSIT_MODE_ENABLED"),
+            base_deposit=float(os.getenv("BASE_DEPOSIT", "0")),
+            transfer_to_bank_deposit=float(os.getenv("TRANSFER_TO_BANK_DEPOSIT", "0")),
         ),
         telegram=TelegramConfig(
             notifications_enabled=_env_bool("TELEGRAM_NOTIFICATIONS_ENABLED"),

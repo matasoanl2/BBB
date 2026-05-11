@@ -22,9 +22,13 @@ class ReconciliationState:
     last_external_balance_change_amount: float = 0.0
 
 
+
 @dataclass(slots=True)
 class RuntimeBettingState:
     """Typed mutable state with dict-like compatibility for existing modules."""
+    # suppression fields for log spam prevention
+    _last_resume_log_balance: float | None = None
+    _last_affordable_targets_count: int | None = None
 
     current_step: int = 0
     consecutive_losses: int = 0
@@ -48,6 +52,8 @@ class RuntimeBettingState:
     external_deposits_total: float = 0.0
     external_withdrawals_total: float = 0.0
     reconciliation_phase: str = "idle"
+    deposit_balance: float = 0.0
+    saved_real_balance: float = 0.0  # for deposit mode: real balance part
     last_external_balance_change_type: str | None = None
     last_external_balance_change_amount: float = 0.0
     low_balance_pause_active: bool = False

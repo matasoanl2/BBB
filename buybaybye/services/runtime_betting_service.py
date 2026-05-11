@@ -128,6 +128,7 @@ class BettingRuntimeService:
         roi: str = "-",
         balance: str = "-",
         real_balance: str = "-",
+        deposit_balance: str = "",
         error_msg: str = "",
         bets_count: str = "",
     ) -> str:
@@ -148,6 +149,7 @@ class BettingRuntimeService:
             roi=roi,
             balance=balance,
             real_balance=real_balance,
+            deposit_balance=deposit_balance,
             error_msg=error_msg,
             bets_count=bets_count,
             color_reset=self.runtime_config.colors.reset,

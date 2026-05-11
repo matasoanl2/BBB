@@ -450,6 +450,11 @@
                 <div class="sub">Баланс из accounting_ws</div>
             </div>
             <div class="panel card card-blue">
+                <div class="label">Deposit Balance</div>
+                <div class="metric" id="depositBalance">-</div>
+                <div class="sub">Доступный баланс для ставок</div>
+            </div>
+            <div class="panel card card-blue">
                 <div class="label">Шаг</div>
                 <div class="metric" id="stepLabel">-</div>
                 <div class="sub">Позиция внутри прогрессии</div>
@@ -690,6 +695,7 @@
             setText("updatedAt", fmtDateTime(snapshot.updated_at));
             setText("sessionBalance", fmtMoney(summary.session_balance));
             setText("realBalance", fmtMoney(summary.account_balance));
+            setText("depositBalance", fmtMoney(summary.deposit_balance));
             setText("stepLabel", summary.step_label || "-");
             setText("lossStreak", String(summary.consecutive_losses || 0));
             setText("withdrawalsTotal", fmtMoney(summary.withdrawals_total));

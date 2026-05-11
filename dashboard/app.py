@@ -548,6 +548,7 @@ def _get_summary(snapshot: dict[str, Any], conn=None) -> dict[str, Any]:
 
     session_balance = float(snapshot.get("session_balance") or 0.0)
     account_balance = snapshot.get("account_balance")
+    deposit_balance = snapshot.get("deposit_balance")
     delta = None
     if isinstance(account_balance, (int, float)):
         delta = float(account_balance) - session_balance
@@ -561,6 +562,7 @@ def _get_summary(snapshot: dict[str, Any], conn=None) -> dict[str, Any]:
     return {
         "session_balance": session_balance,
         "account_balance": account_balance,
+        "deposit_balance": deposit_balance,
         "balance_delta": delta,
         "step_label": step_label,
         "consecutive_losses": int(snapshot.get("consecutive_losses") or 0),

@@ -51,6 +51,7 @@ class AccountingRuntimeService:
 
         return _accounting_get_balance_for_log(
             runtime_context=self.runtime_context,
+            runtime_config=self.runtime_config,
             is_account_balance_stale_func=self.is_account_balance_stale,
         )
 

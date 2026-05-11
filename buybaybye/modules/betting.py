@@ -31,6 +31,7 @@ def format_bet_log(
     roi: str = "-",
     balance: str = "-",
     real_balance: str = "-",
+    deposit_balance: str = "",
     error_msg: str = "",
     bets_count: str = "",
     color_reset: str,
@@ -66,8 +67,9 @@ def format_bet_log(
             "result": result,
             "profit": profit,
             "roi": roi,
-            "session_balance": balance,
+            "deposit_balance": balance if deposit_balance else None,
             "real_balance": real_balance,
+            "total_balance": f"{deposit_value + real_value:.0f}р" if deposit_balance else None,
         }
         if error_msg:
             payload["error"] = error_msg
@@ -86,9 +88,15 @@ def format_bet_log(
             f"result={result}",
             f"profit={profit}",
             f"roi={roi}",
-            f"session_balance={balance}",
+            f"deposit_balance={balance}" if deposit_balance else f"session_balance={balance}",
             f"real_balance={real_balance}",
         ]
+        if deposit_balance:
+            try:
+                total = deposit_value + real_value
+                fields.append(f"total_balance={total:.0f}р")
+            except:
+                pass
         if error_msg:
             fields.append(f"error={error_msg}")
         return " | ".join(fields)
@@ -117,22 +125,62 @@ def format_bet_log(
 
     result_display_fmt = format_result_pretty_func(result_display)
 
-    try:
-        balance_value = float(balance.replace("р", "").strip())
-        if balance_value > 0:
-            balance_colored = f"{color_green}🧰 {balance}{reset_full}"
-        elif balance_value < 0:
-            balance_colored = f"{color_red}🧰 {balance}{reset_full}"
-        else:
-            balance_colored = f"🧰 {balance}"
-    except (ValueError, AttributeError):
-        balance_colored = f"🧰 {balance}"
+    if deposit_balance:
+        # Deposit mode: balance column shows deposit_balance, real_balance column shows saved_real_balance, add total
+        try:
+            deposit_value = float(deposit_balance.replace("р", "").strip())
+            if deposit_value > 0:
+                balance_colored = f"{color_green}🧰 {deposit_balance}{reset_full}"
+            elif deposit_value < 0:
+                balance_colored = f"{color_red}🧰 {deposit_balance}{reset_full}"
+            else:
+                balance_colored = f"🧰 {deposit_balance}"
+        except (ValueError, AttributeError):
+            balance_colored = f"🧰 {deposit_balance}"
 
-    try:
-        float(real_balance.replace("р", "").strip())
-        real_balance_colored = f"{color_cyan}💰 {real_balance}{reset_full}"
-    except (ValueError, AttributeError):
-        real_balance_colored = f"💰 {real_balance}"
+        try:
+            real_value = float(real_balance.replace("р", "").strip())
+            if real_value > 0:
+                real_balance_colored = f"{color_cyan}💰 {real_balance}{reset_full}"
+            elif real_value < 0:
+                real_balance_colored = f"{color_red}💰 {real_balance}{reset_full}"
+            else:
+                real_balance_colored = f"💰 {real_balance}"
+        except (ValueError, AttributeError):
+            real_balance_colored = f"💰 {real_balance}"
+
+        # Calculate total
+        try:
+            total_value = deposit_value + real_value
+            total_str = f"{total_value:.0f}р"
+            if total_value > 0:
+                total_colored = f"{color_green}📊 {total_str}{reset_full}"
+            elif total_value < 0:
+                total_colored = f"{color_red}📊 {total_str}{reset_full}"
+            else:
+                total_colored = f"📊 {total_str}"
+        except:
+            total_colored = "📊 -"
+    else:
+        # Normal mode: balance column shows session_balance, real_balance column shows accounting balance
+        try:
+            balance_value = float(balance.replace("р", "").strip())
+            if balance_value > 0:
+                balance_colored = f"{color_green}🧰 {balance}{reset_full}"
+            elif balance_value < 0:
+                balance_colored = f"{color_red}🧰 {balance}{reset_full}"
+            else:
+                balance_colored = f"🧰 {balance}"
+        except (ValueError, AttributeError):
+            balance_colored = f"🧰 {balance}"
+
+        try:
+            float(real_balance.replace("р", "").strip())
+            real_balance_colored = f"{color_cyan}💰 {real_balance}{reset_full}"
+        except (ValueError, AttributeError):
+            real_balance_colored = f"💰 {real_balance}"
+
+        total_colored = ""  # No total in normal mode
 
     status_icon_colored = f"{line_color}{status_icon}{reset_full}"
     action_colored = f"{line_color}{action}{reset_full}"
@@ -157,6 +205,8 @@ def format_bet_log(
         pad_width_center_func(balance_colored, 10),
         pad_width_center_func(real_balance_colored, 12),
     ]
+    if deposit_balance:
+        log_parts.append(pad_width_center_func(total_colored, 12))
 
     log_line = " | ".join(log_parts)
     if error_msg:
@@ -628,6 +678,23 @@ def _run_set_precheck_for_slot(
     targets_display = _slot_prefix + _format_bet_targets_pretty(normalized_targets, format_outcome_pretty_func)
     total_round_amount = amount * len(normalized_targets)
     available_balance = _normalize_account_balance(betting_state.get("account_balance"))
+    if runtime_config.accounting.deposit_mode_enabled:
+        deposit_balance = _normalize_account_balance(betting_state.get("deposit_balance"))
+        available_balance = deposit_balance
+
+        # Auto-replenish deposit if insufficient for at least one bet
+        if available_balance < amount:
+            saved_real_balance = betting_state.get("saved_real_balance", 0.0)
+            base_deposit = runtime_config.accounting.base_deposit
+            if saved_real_balance >= base_deposit:
+                deposit_balance += base_deposit
+                saved_real_balance -= base_deposit
+                available_balance = deposit_balance
+                betting_state["saved_real_balance"] = saved_real_balance
+                betting_state["deposit_balance"] = deposit_balance
+                if betting_config.debug_enabled:
+                    print(f"[DEPOSIT] Автопополнение: +{base_deposit}р на deposit, saved_real={saved_real_balance:.0f}р, deposit={deposit_balance:.0f}р", flush=True)
+
     was_low_balance_paused = bool(betting_state.get("low_balance_pause_active"))
     stop_at_balance = float(getattr(betting_config, "stop_at_balance", 0.0) or 0.0)
     stop_at_balance_resume_check_seconds = float(
@@ -721,8 +788,9 @@ def _run_set_precheck_for_slot(
                 result="STOP",
                 profit="-",
                 roi=f"{roi:.2f}%",
-                balance=f"{betting_state.get('session_balance', 0):.0f}р",
-                real_balance=get_balance_for_log_func(),
+                balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+                real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                 error_msg=betting_state["last_set_error"],
                 bets_count=next_round_display,
             )
@@ -834,8 +902,9 @@ def _run_set_precheck_for_slot(
                     result="PAUSE",
                     profit="-",
                     roi=f"{roi:.2f}%",
-                    balance=f"{betting_state.get('session_balance', 0):.0f}р",
-                    real_balance=get_balance_for_log_func(),
+                    balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+                    real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                    deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                     error_msg=betting_state["last_set_error"],
                     bets_count=next_round_display,
                 )
@@ -871,7 +940,9 @@ def _run_set_precheck_for_slot(
             return False, (), amount
 
     effective_balance = available_balance
-    if available_balance_override is not None:
+    # In deposit mode, don't apply available_balance_override (percent limit) since it's already calculated from deposit_balance
+    # For percent check, always use available_balance directly (which is deposit_balance in deposit mode)
+    if available_balance_override is not None and not runtime_config.accounting.deposit_mode_enabled:
         effective_balance = (
             available_balance_override
             if available_balance is None
@@ -937,8 +1008,10 @@ def _run_set_precheck_for_slot(
         betting_state["last_bet_amount"] = 0.0
         betting_state["last_set_amount"] = total_round_amount
         betting_state["last_set_status"] = "paused_low_balance"
+        # Безопасно форматируем effective_balance (может быть None)
+        balance_val = effective_balance if effective_balance is not None else 0.0
         betting_state["last_set_error"] = (
-            f"Пауза: баланс {available_balance:.0f}р меньше минимальной ставки {amount:.0f}р на одну цель"
+            f"Пауза: баланс {balance_val:.0f}р меньше минимальной ставки {amount:.0f}р на одну цель"
         )
         if pause_changed:
             roi = calculate_roi_func()
@@ -951,8 +1024,9 @@ def _run_set_precheck_for_slot(
                 result="PAUSE",
                 profit="-",
                 roi=f"{roi:.2f}%",
-                balance=f"{betting_state.get('session_balance', 0):.0f}р",
-                real_balance=get_balance_for_log_func(),
+                balance=f"{balance_val:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+                real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                deposit_balance=f"{balance_val:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                 error_msg=betting_state["last_set_error"],
                 bets_count=next_round_display,
             )
@@ -963,7 +1037,7 @@ def _run_set_precheck_for_slot(
                 level="warning",
                 message="[SET-PAUSE] Возобновим ставки автоматически после восстановления real balance.",
                 extra={
-                    "account_balance": available_balance,
+                    "account_balance": balance_val,
                     "required_min_bet": amount,
                     "slot": slot_label or "1",
                 },
@@ -993,29 +1067,34 @@ def _run_set_precheck_for_slot(
         _clear_low_balance_pause_state(betting_state)
         betting_state["current_step"] = 0
         betting_state["consecutive_losses"] = 0
+        balance_val = effective_balance if effective_balance is not None else 0.0
         if resume_base_bet > 0 and amount != resume_base_bet:
             amount = resume_base_bet
             affordable_targets = _get_affordable_bet_targets(
                 bet_targets=normalized_targets,
                 amount=amount,
-                available_balance=available_balance,
+                available_balance=balance_val,
             )
             if not affordable_targets:
                 return False, (), amount
-        _print_bet_system_log(
-            runtime_config=runtime_config,
-            event="set_resume_low_balance",
-            level="info",
-            message=f"[SET-RESUME] Real balance восстановлен до {available_balance:.0f}р, продолжаем размещение ставок.",
-            extra={
-                "account_balance": available_balance,
-                "slot": slot_label or "1",
-            },
-        )
+        # SUPPRESSION: логируем [SET-RESUME] только если баланс изменился
+        last_resume_balance = betting_state.get("_last_resume_log_balance")
+        if last_resume_balance != balance_val:
+            _print_bet_system_log(
+                runtime_config=runtime_config,
+                event="set_resume_low_balance",
+                level="info",
+                message=f"[SET-RESUME] Real balance восстановлен до {balance_val:.0f}р, продолжаем размещение ставок.",
+                extra={
+                    "account_balance": balance_val,
+                    "slot": slot_label or "1",
+                },
+            )
+            betting_state["_last_resume_log_balance"] = balance_val
         update_runtime_snapshot_func(
             "bet_low_balance_resume",
             {
-                "account_balance": available_balance,
+                "account_balance": balance_val,
                 "requested_targets": [target.token for target in requested_targets],
                 "effective_targets": [target.token for target in affordable_targets],
                 "low_balance_pause_active": False,
@@ -1024,11 +1103,15 @@ def _run_set_precheck_for_slot(
         )
 
     if len(affordable_targets) < len(normalized_targets):
-        print(
-            "[SET-CHECK] Недостаточно real balance для полного batch, "
-            f"размещаем {len(affordable_targets)}/{len(normalized_targets)} целей.",
-            flush=True,
-        )
+        # SUPPRESSION: логируем только если изменилось число affordable_targets
+        last_affordable_count = betting_state.get("_last_affordable_targets_count")
+        if last_affordable_count != len(affordable_targets):
+            print(
+                "[SET-CHECK] Недостаточно real balance для полного batch, "
+                f"размещаем {len(affordable_targets)}/{len(normalized_targets)} целей.",
+                flush=True,
+            )
+            betting_state["_last_affordable_targets_count"] = len(affordable_targets)
 
     return True, affordable_targets, amount
 
@@ -1098,11 +1181,28 @@ async def place_bets(
             update_runtime_snapshot_func=update_runtime_snapshot_func,
             slot_label=slot_label,
         ):
-            return False
+            return False, (), amount
 
         step_for_history = betting_state.get("current_step", 0)
         max_steps = len(current_strategy.get("coefficients", [1])) if current_strategy else 15
         available_balance = _normalize_account_balance(betting_state.get("account_balance"))
+        if runtime_config.accounting.deposit_mode_enabled:
+            deposit_balance = _normalize_account_balance(betting_state.get("deposit_balance"))
+            available_balance = deposit_balance
+
+            # Auto-replenish deposit if insufficient and real balance allows
+            if available_balance < total_round_amount:
+                saved_real_balance = betting_state.get("saved_real_balance", 0.0)
+                base_deposit = runtime_config.accounting.base_deposit
+                if saved_real_balance >= base_deposit:
+                    deposit_balance += base_deposit
+                    saved_real_balance -= base_deposit
+                    available_balance = deposit_balance
+                    betting_state["saved_real_balance"] = saved_real_balance
+                    betting_state["deposit_balance"] = deposit_balance
+                    if betting_config.debug_enabled:
+                        print(f"[DEPOSIT] Автопополнение: +{base_deposit}р на deposit, saved_real={saved_real_balance:.0f}р, deposit={deposit_balance:.0f}р", flush=True)
+
         was_low_balance_paused = bool(betting_state.get("low_balance_pause_active"))
         stop_at_balance = float(getattr(betting_config, "stop_at_balance", 0.0) or 0.0)
         stop_at_balance_resume_check_seconds = float(
@@ -1195,8 +1295,9 @@ async def place_bets(
                     result="STOP",
                     profit="-",
                     roi=f"{roi:.2f}%",
-                    balance=f"{betting_state.get('session_balance', 0):.0f}р",
-                    real_balance=get_balance_for_log_func(),
+                    balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+                    real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                    deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                     error_msg=betting_state["last_set_error"],
                     bets_count=next_round_display,
                 )
@@ -1304,8 +1405,9 @@ async def place_bets(
                         result="PAUSE",
                         profit="-",
                         roi=f"{roi:.2f}%",
-                        balance=f"{betting_state.get('session_balance', 0):.0f}р",
-                        real_balance=get_balance_for_log_func(),
+                        balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+                        real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                        deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                         error_msg=betting_state["last_set_error"],
                         bets_count=next_round_display,
                     )
@@ -1379,71 +1481,74 @@ async def place_bets(
                     },
                 )
 
+
         if available_balance is None:
             if was_low_balance_paused:
-                return False
+                return False, (), amount
             if betting_config.debug_enabled and betting_state.get("total_bets_placed", 0) == 0:
                 print("[SET-CHECK] Баланс из accounting_ws пока неизвестен, первую batch-ставку пропускаем без проверки лимита.", flush=True)
-        else:
-            affordable_targets = _get_affordable_bet_targets(
-                bet_targets=normalized_targets,
+            return False, (), amount
+
+        affordable_targets = _get_affordable_bet_targets(
+            bet_targets=normalized_targets,
+            amount=amount,
+            available_balance=available_balance,
+        )
+        if not affordable_targets:
+            pause_changed = _set_low_balance_pause_state(
+                betting_state,
                 amount=amount,
-                available_balance=available_balance,
+                bet_targets=normalized_targets,
+                reason="min_bet_insufficient",
             )
-            if not affordable_targets:
-                pause_changed = _set_low_balance_pause_state(
-                    betting_state,
-                    amount=amount,
-                    bet_targets=normalized_targets,
-                    reason="min_bet_insufficient",
+            betting_state["last_bet_amount"] = 0.0
+            betting_state["last_set_amount"] = total_round_amount
+            betting_state["last_set_status"] = "paused_low_balance"
+            betting_state["last_set_error"] = (
+                f"Пауза: баланс {available_balance:.0f}р меньше минимальной ставки {amount:.0f}р на одну цель"
+            )
+            if pause_changed:
+                roi = calculate_roi_func()
+                log_line = format_bet_log_func(
+                    action="SET",
+                    status_icon="❌",
+                    outcome=targets_display,
+                    amount=f"{total_round_amount:.0f}р",
+                    step=f"{step_for_history+1}/{max_steps}",
+                    result="PAUSE",
+                    profit="-",
+                    roi=f"{roi:.2f}%",
+                    balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+                    real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                    deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
+                    error_msg=betting_state["last_set_error"],
+                    bets_count=next_round_display,
                 )
-                betting_state["last_bet_amount"] = 0.0
-                betting_state["last_set_amount"] = total_round_amount
-                betting_state["last_set_status"] = "paused_low_balance"
-                betting_state["last_set_error"] = (
-                    f"Пауза: баланс {available_balance:.0f}р меньше минимальной ставки {amount:.0f}р на одну цель"
+                print(log_line, flush=True)
+                _print_bet_system_log(
+                    runtime_config=runtime_config,
+                    event="set_pause_low_balance",
+                    level="warning",
+                    message="[SET-PAUSE] Возобновим ставки автоматически после восстановления real balance.",
+                    extra={
+                        "account_balance": available_balance,
+                        "required_min_bet": amount,
+                    },
                 )
-                if pause_changed:
-                    roi = calculate_roi_func()
-                    log_line = format_bet_log_func(
-                        action="SET",
-                        status_icon="❌",
-                        outcome=targets_display,
-                        amount=f"{total_round_amount:.0f}р",
-                        step=f"{step_for_history+1}/{max_steps}",
-                        result="PAUSE",
-                        profit="-",
-                        roi=f"{roi:.2f}%",
-                        balance=f"{betting_state.get('session_balance', 0):.0f}р",
-                        real_balance=get_balance_for_log_func(),
-                        error_msg=betting_state["last_set_error"],
-                        bets_count=next_round_display,
-                    )
-                    print(log_line, flush=True)
-                    _print_bet_system_log(
-                        runtime_config=runtime_config,
-                        event="set_pause_low_balance",
-                        level="warning",
-                        message="[SET-PAUSE] Возобновим ставки автоматически после восстановления real balance.",
-                        extra={
-                            "account_balance": available_balance,
-                            "required_min_bet": amount,
-                        },
-                    )
-                    update_runtime_snapshot_func(
-                        "bet_low_balance_pause",
-                        {
-                            "last_set_amount": total_round_amount,
-                            "last_set_status": betting_state.get("last_set_status"),
-                            "last_set_error": betting_state.get("last_set_error"),
-                            "requested_targets": [target.token for target in requested_targets],
-                            "effective_targets": [],
-                            "low_balance_pause_active": True,
-                            "low_balance_pause_required_balance": amount,
-                            "low_balance_pause_reason": betting_state.get("low_balance_pause_reason"),
-                        },
-                    )
-                return False
+                update_runtime_snapshot_func(
+                    "bet_low_balance_pause",
+                    {
+                        "last_set_amount": total_round_amount,
+                        "last_set_status": betting_state.get("last_set_status"),
+                        "last_set_error": betting_state.get("last_set_error"),
+                        "requested_targets": [target.token for target in requested_targets],
+                        "effective_targets": [],
+                        "low_balance_pause_active": True,
+                        "low_balance_pause_required_balance": amount,
+                        "low_balance_pause_reason": betting_state.get("low_balance_pause_reason"),
+                    },
+                )
+            return False, (), amount
 
             if was_low_balance_paused:
                 _api_fail_pause_reason = str(betting_state.get("low_balance_pause_reason") or "")
@@ -1511,8 +1616,9 @@ async def place_bets(
             result="ERROR",
             profit="-",
             roi=f"{roi:.2f}%",
-            balance=f"{betting_state.get('session_balance', 0):.0f}р",
-            real_balance=get_balance_for_log_func(),
+            balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+            real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+            deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
             error_msg=str(exc)[:100],
             bets_count=next_round_display,
         )
@@ -1691,8 +1797,9 @@ async def place_bets(
                     result="------",
                     profit=f"+{potential_total_margin:.0f}р",
                     roi=f"{roi:.2f}%",
-                    balance=f"{betting_state.get('session_balance', 0):.0f}р",
-                    real_balance=get_balance_for_log_func(),
+                    balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+                    real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                    deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                     bets_count=str(current_round_number).zfill(3),
                 )
                 print(log_line, flush=True)
@@ -1777,8 +1884,9 @@ async def place_bets(
                         result="PAUSE",
                         profit="-",
                         roi=f"{roi:.2f}%",
-                        balance=f"{betting_state.get('session_balance', 0):.0f}р",
-                        real_balance=get_balance_for_log_func(),
+                        balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+                        real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                        deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                         error_msg=betting_state["last_set_error"],
                         bets_count=next_round_display,
                     )
@@ -1806,8 +1914,9 @@ async def place_bets(
                         result="ERROR",
                         profit="-",
                         roi=f"{roi:.2f}%",
-                        balance=f"{betting_state.get('session_balance', 0):.0f}р",
-                        real_balance=get_balance_for_log_func(),
+                        balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+                        real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                        deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                         error_msg=response_text[:100] if response_text else "Unknown error",
                         bets_count=next_round_display,
                     )
@@ -1869,7 +1978,9 @@ async def place_bets(
                 result="DB_ERROR",
                 profit="-",
                 roi=f"{roi:.2f}%",
-                balance=get_balance_for_log_func(),
+                balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+                real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                 error_msg=str(exc)[:100],
                 bets_count=next_round_display,
             )
@@ -1907,8 +2018,9 @@ async def place_bets(
             result="ERROR",
             profit="-",
             roi=f"{roi:.2f}%",
-            balance=f"{betting_state.get('session_balance', 0):.0f}р",
-            real_balance=get_balance_for_log_func(),
+            balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state.get('session_balance', 0):.0f}р",
+            real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+            deposit_balance=f"{available_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
             error_msg=str(exc)[:100],
             bets_count=next_round_display,
         )
@@ -2246,6 +2358,11 @@ async def place_bets_combined_slots(
                 potential_margin_1 = ((slot1_amount * payout_coeff_1) - slot1_amount) * len(slot1_targets)
                 potential_margin_2 = ((slot2_amount * payout_coeff_2) - slot2_amount) * len(slot2_targets)
 
+
+                # Получаем актуальные значения баланса для каждого слота
+                slot1_balance = _normalize_account_balance(betting_state_1.get("deposit_balance")) if runtime_config.accounting.deposit_mode_enabled else betting_state_1.get("session_balance", 0)
+                slot2_balance = _normalize_account_balance(betting_state_2.get("deposit_balance")) if runtime_config.accounting.deposit_mode_enabled else betting_state_2.get("session_balance", 0)
+
                 log_line_1 = format_bet_log_func(
                     action="SET",
                     status_icon="✅",
@@ -2255,8 +2372,9 @@ async def place_bets_combined_slots(
                     result="------",
                     profit=f"+{potential_margin_1:.0f}р",
                     roi=f"{calculate_roi_func():.2f}%",
-                    balance=f"{betting_state_1.get('session_balance', 0):.0f}р",
-                    real_balance=get_balance_for_log_func(),
+                    balance=f"{slot1_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state_1.get('session_balance', 0):.0f}р",
+                    real_balance=f"{betting_state_1.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                    deposit_balance=f"{slot1_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                     bets_count=slot1_round_display,
                 )
                 print(log_line_1, flush=True)
@@ -2270,8 +2388,9 @@ async def place_bets_combined_slots(
                     result="------",
                     profit=f"+{potential_margin_2:.0f}р",
                     roi=f"{calculate_roi_2_func():.2f}%",
-                    balance=f"{betting_state_2.get('session_balance', 0):.0f}р",
-                    real_balance=get_balance_for_log_func(),
+                    balance=f"{slot2_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else f"{betting_state_2.get('session_balance', 0):.0f}р",
+                    real_balance=f"{betting_state_2.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
+                    deposit_balance=f"{slot2_balance:.0f}р" if runtime_config.accounting.deposit_mode_enabled else "",
                     bets_count=slot2_round_display,
                 )
                 print(log_line_2, flush=True)
@@ -2410,7 +2529,7 @@ async def place_bets_combined_slots(
                     profit="-",
                     roi=f"{calculate_roi_func():.2f}%",
                     balance=f"{betting_state_1.get('session_balance', 0):.0f}р",
-                    real_balance=get_balance_for_log_func(),
+                    real_balance=f"{betting_state_1.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
                     error_msg=slot1_error,
                     bets_count=slot1_round_display,
                 ),
@@ -2427,7 +2546,7 @@ async def place_bets_combined_slots(
                     profit="-",
                     roi=f"{calculate_roi_2_func():.2f}%",
                     balance=f"{betting_state_2.get('session_balance', 0):.0f}р",
-                    real_balance=get_balance_for_log_func(),
+                    real_balance=f"{betting_state_2.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
                     error_msg=slot2_error,
                     bets_count=slot2_round_display,
                 ),
@@ -2477,7 +2596,7 @@ async def place_bets_combined_slots(
                 profit="-",
                 roi=f"{calculate_roi_func():.2f}%",
                 balance=f"{betting_state_1.get('session_balance', 0):.0f}р",
-                real_balance=get_balance_for_log_func(),
+                real_balance=f"{betting_state_1.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
                 error_msg=str(exc)[:100],
                 bets_count=slot1_round_display,
             ),
@@ -2494,7 +2613,7 @@ async def place_bets_combined_slots(
                 profit="-",
                 roi=f"{calculate_roi_2_func():.2f}%",
                 balance=f"{betting_state_2.get('session_balance', 0):.0f}р",
-                real_balance=get_balance_for_log_func(),
+                real_balance=f"{betting_state_2.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
                 error_msg=str(exc)[:100],
                 bets_count=slot2_round_display,
             ),
@@ -2732,7 +2851,7 @@ async def process_betting_round(
                 profit=f"{round_margin:+.0f}р",
                 roi=f"{roi:.2f}%",
                 balance=f"{balance_for_log:.0f}р",
-                real_balance=get_balance_for_log_func(),
+                real_balance=f"{betting_state.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
                 bets_count=str(resolved_round_number or total_bets).zfill(3),
             )
             print(log_line, flush=True)
@@ -2862,7 +2981,7 @@ async def process_betting_round(
                     profit=f"{round_margin_2:+.0f}р",
                     roi=f"{(betting_state_2.get('total_profit', 0) / betting_state_2.get('total_bet_amount', 1) * 100) if betting_state_2.get('total_bet_amount', 0) > 0 else 0:.2f}%",
                     balance=f"{balance_for_log_2:.0f}р",
-                    real_balance=get_balance_for_log_func(),
+                    real_balance=f"{betting_state_2.get('saved_real_balance', 0):.0f}р" if runtime_config.accounting.deposit_mode_enabled else get_balance_for_log_func(),
                     bets_count=str(resolved_round_number_2).zfill(3),
                 )
                 print(log_line_2, flush=True)
@@ -3035,7 +3154,14 @@ async def process_betting_round(
             and shared_balance_for_slots is not None
             and float(getattr(runtime_config.betting, "max_stake_percent_of_bank", 0.0) or 0.0) > 0
         ):
-            shared_percent_limit_balance = shared_balance_for_slots * (
+            # Use deposit_balance for percent limit in deposit mode, otherwise use account_balance
+            balance_for_percent_calc = shared_balance_for_slots
+            if runtime_config.accounting.deposit_mode_enabled:
+                deposit_bal = float((runtime_context.betting_state or {}).get("deposit_balance", 0.0) or 0.0)
+                if deposit_bal > 0:
+                    balance_for_percent_calc = deposit_bal
+            
+            shared_percent_limit_balance = balance_for_percent_calc * (
                 float(getattr(runtime_config.betting, "max_stake_percent_of_bank", 0.0) or 0.0) / 100.0
             )
 
@@ -3100,6 +3226,10 @@ async def process_betting_round(
                 runtime_context.betting_state_2["account_balance_updated_at"] = (runtime_context.betting_state or {}).get(
                     "account_balance_updated_at"
                 )
+                # In deposit mode, sync deposit_balance and saved_real_balance to slot2
+                if runtime_config.accounting.deposit_mode_enabled:
+                    runtime_context.betting_state_2["deposit_balance"] = (runtime_context.betting_state or {}).get("deposit_balance", 0.0)
+                    runtime_context.betting_state_2["saved_real_balance"] = (runtime_context.betting_state or {}).get("saved_real_balance", 0.0)
 
             slot1_step_for_history = int((runtime_context.betting_state or {}).get("current_step", 0) or 0)
             slot2_step_for_history = int((runtime_context.betting_state_2 or {}).get("current_step", 0) or 0)
