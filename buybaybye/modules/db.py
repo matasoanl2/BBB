@@ -12,6 +12,7 @@ from buybaybye.core.runtime_config import DatabaseConfig
 
 
 _INITIALIZED_DATABASES: set[tuple[str, str, str, str, str]] = set()
+RUNTIME_SCHEMA_ADVISORY_LOCK_KEY = 2798371240983741234
 
 
 def connect_postgres_with_retry(*, fatal_context: str = "postgresql", **connect_kwargs):
@@ -79,68 +80,79 @@ def ensure_runtime_schema(*, database_config: DatabaseConfig) -> None:
     )
 
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS game_results (
-            id SERIAL PRIMARY KEY,
-            game_id TEXT,
-            timestamp TIMESTAMP WITH TIME ZONE,
-            player_name TEXT,
-            dice_results JSONB,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        )
-        """
-    )
-    cursor.execute("""ALTER TABLE game_results ADD COLUMN IF NOT EXISTS game_id TEXT""")
-    cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_game_results_game_id ON game_results(game_id)""")
-    cursor.execute("""CREATE INDEX IF NOT EXISTS idx_timestamp ON game_results(timestamp)""")
-    cursor.execute("""CREATE INDEX IF NOT EXISTS idx_player ON game_results(player_name)""")
+    try:
+        cursor.execute("SELECT pg_advisory_lock(%s)", (RUNTIME_SCHEMA_ADVISORY_LOCK_KEY,))
+        while True:
+            try:
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS game_results (
+                        id SERIAL PRIMARY KEY,
+                        game_id TEXT,
+                        timestamp TIMESTAMP WITH TIME ZONE,
+                        player_name TEXT,
+                        dice_results JSONB,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                    """
+                )
+                cursor.execute("""ALTER TABLE game_results ADD COLUMN IF NOT EXISTS game_id TEXT""")
+                cursor.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_game_results_game_id ON game_results(game_id)""")
+                cursor.execute("""CREATE INDEX IF NOT EXISTS idx_timestamp ON game_results(timestamp)""")
+                cursor.execute("""CREATE INDEX IF NOT EXISTS idx_player ON game_results(player_name)""")
 
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS bet_history (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMP WITH TIME ZONE,
-            outcome TEXT,
-            specifier TEXT,
-            amount FLOAT,
-            strategy TEXT,
-            bet_step INTEGER,
-            status TEXT,
-            result_dice_color TEXT,
-            result_dice_value INTEGER,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        )
-        """
-    )
-    cursor.execute("""CREATE INDEX IF NOT EXISTS idx_bet_timestamp ON bet_history(timestamp)""")
-    cursor.execute("""ALTER TABLE bet_history ADD COLUMN IF NOT EXISTS slot INTEGER DEFAULT 1""")
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS bet_history (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TIMESTAMP WITH TIME ZONE,
+                        outcome TEXT,
+                        specifier TEXT,
+                        amount FLOAT,
+                        strategy TEXT,
+                        bet_step INTEGER,
+                        status TEXT,
+                        result_dice_color TEXT,
+                        result_dice_value INTEGER,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                    """
+                )
+                cursor.execute("""CREATE INDEX IF NOT EXISTS idx_bet_timestamp ON bet_history(timestamp)""")
+                cursor.execute("""ALTER TABLE bet_history ADD COLUMN IF NOT EXISTS slot INTEGER DEFAULT 1""")
 
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS runtime_snapshot (
-            snapshot_key TEXT PRIMARY KEY,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            payload JSONB NOT NULL
-        )
-        """
-    )
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS runtime_events (
-            id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-            event_type TEXT,
-            payload JSONB NOT NULL
-        )
-        """
-    )
-    cursor.execute("""CREATE INDEX IF NOT EXISTS idx_runtime_events_timestamp ON runtime_events(timestamp)""")
-    cursor.execute("""CREATE INDEX IF NOT EXISTS idx_runtime_events_id ON runtime_events(id)""")
-    conn.commit()
-    cursor.close()
-    conn.close()
-    _INITIALIZED_DATABASES.add(identity)
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS runtime_snapshot (
+                        snapshot_key TEXT PRIMARY KEY,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        payload JSONB NOT NULL
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS runtime_events (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        event_type TEXT,
+                        payload JSONB NOT NULL
+                    )
+                    """
+                )
+                cursor.execute("""CREATE INDEX IF NOT EXISTS idx_runtime_events_timestamp ON runtime_events(timestamp)""")
+                cursor.execute("""CREATE INDEX IF NOT EXISTS idx_runtime_events_id ON runtime_events(id)""")
+                conn.commit()
+                _INITIALIZED_DATABASES.add(identity)
+                break
+            except psycopg2.errors.DeadlockDetected:
+                conn.rollback()
+                time.sleep(0.1)
+                continue
+    finally:
+        cursor.execute("SELECT pg_advisory_unlock(%s)", (RUNTIME_SCHEMA_ADVISORY_LOCK_KEY,))
+        cursor.close()
+        conn.close()
 
 
 def get_db_connection(*, database_config: DatabaseConfig):
