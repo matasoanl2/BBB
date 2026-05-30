@@ -270,6 +270,42 @@ def update_balance_from_accounting_payload(
                 dedup_key="withdrawal_detected",
                 enabled=runtime_config.telegram.notify_withdrawals,
             )
+                # Если настроен порог сброса шагов ставок — выполнить сброс
+                try:
+                    reset_threshold = float(getattr(runtime_config, "betting").reset_on_withdrawal_amount or 0.0)
+                except Exception:
+                    reset_threshold = 0.0
+
+                if reset_threshold and withdrawal_amount >= reset_threshold:
+                    # Сбросить шаги и связанные счётчики для слота 1
+                    betting_state["current_step"] = 0
+                    betting_state["consecutive_losses"] = 0
+                    betting_state["last_bet_amount"] = 0
+
+                    # Сброс для слота 2, если он используется
+                    betting_state_2_ref = getattr(runtime_context, "betting_state_2", None)
+                    if betting_state_2_ref is not None:
+                        betting_state_2_ref["current_step"] = 0
+                        betting_state_2_ref["consecutive_losses"] = 0
+                        betting_state_2_ref["last_bet_amount"] = 0
+
+                    msg = (
+                        f"Шаги стратегий сброшены: обнаружен вывод {withdrawal_amount:.0f}р >= threshold {reset_threshold:.0f}р"
+                    )
+                    print(f"[ACCOUNTING] {msg}", flush=True)
+                    queue_telegram_notification_func(
+                        "[BuyBayBye] Сброшены шаги стратегий",
+                        msg,
+                        dedup_key="reset_steps_on_withdrawal",
+                        enabled=runtime_config.telegram.notify_withdrawals,
+                    )
+                    update_runtime_snapshot_func(
+                        "withdrawal_reset_steps",
+                        {
+                            "withdrawal_amount": withdrawal_amount,
+                            "reset_threshold": reset_threshold,
+                        },
+                    )
     elif isinstance(previous_balance, (int, float)) and new_balance > previous_balance:
         actual_rise = new_balance - float(previous_balance)
         total_pending_settlement = pending_expected_settlement_credit + slot2_pending_settlement

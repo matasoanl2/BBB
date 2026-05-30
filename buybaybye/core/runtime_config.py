@@ -131,6 +131,9 @@ class BettingConfig:
     configured_targets_raw_2: str = ""
     configured_targets_error_2: str | None = None
     secondary_enabled: bool = False
+    # Amount threshold (in RUB). If an external withdrawal >= this amount is detected,
+    # the runtime may reset betting steps. 0 disables the feature.
+    reset_on_withdrawal_amount: float = 0.0
 
 
 @dataclass(slots=True)
@@ -359,6 +362,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             post_log_enabled=_env_bool("BET_POST_LOG_ENABLED"),
             pending_win_confirmation_enabled=_env_bool("PENDING_WIN_CONFIRMATION_ENABLED", "true"),
             combine_slots_in_single_post=_env_bool("BET_COMBINE_SLOTS_IN_SINGLE_POST", "false"),
+            reset_on_withdrawal_amount=float(os.getenv("BET_RESET_ON_WITHDRAWAL_AMOUNT", "0") or "0"),
             strategy_name_2=raw_strategy_name_2,
             base_bet_2=raw_base_bet_2,
             configured_targets_2=configured_targets_2,
