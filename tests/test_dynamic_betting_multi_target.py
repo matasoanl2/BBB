@@ -397,6 +397,73 @@ def test_update_dynamic_bet_2_overlap_uses_non_average_fallback_for_current_roun
 
     outcome, specifier = service.update_dynamic_bet_2(excluded_tokens={"Y4"})
 
+    # Strict expectation: should pick the non-average fallback Y5 and update state
     assert (outcome, specifier) == ("yellow", "5")
     assert runtime_context.get_current_bet_target_2() == ("yellow", "5")
     assert runtime_context.betting_state_2["dynamic_targets"] == ["Y5"]
+
+
+def test_dynamic_prioritize_by_higher_step_slot1_higher() -> None:
+    # slot1 has higher current_step and should keep its token; slot2 must avoid it
+    configured_targets = (BetTarget("red", "6"),)
+    configured_targets_2 = (BetTarget("yellow", "4"),)
+    runtime_config = _make_runtime_config(configured_targets=configured_targets, multi_target_enabled=False)
+    runtime_config.dynamic_betting.enabled_2 = True
+    runtime_config.dynamic_betting.prioritize_by_higher_step_when_both_dynamic = True
+    runtime_context = _make_runtime_context_with_slot2(configured_targets, configured_targets_2)
+
+    # slot1 is ahead in steps
+    runtime_context.betting_state["current_step"] = 5
+    runtime_context.betting_state_2["current_step"] = 2
+    runtime_context.betting_state["total_bets_placed"] = runtime_config.dynamic_betting.recalc_interval
+    runtime_context.betting_state_2["total_bets_placed"] = runtime_config.dynamic_betting.recalc_interval
+
+    service = BettingRuntimeService(runtime_context, runtime_config)
+    stats = {
+        "red_6": {"freq": 50, "frequency": 50.0},
+        "yellow_5": {"freq": 40, "frequency": 40.0},
+        "yellow_4": {"freq": 30, "frequency": 30.0},
+    }
+    service.analyze_all_results_frequency = lambda: stats
+
+    # Compute both slots deterministically so higher-step slot wins priority
+    runtime_context.betting_state["total_bets_placed"] = runtime_config.dynamic_betting.recalc_interval
+    runtime_context.betting_state_2["total_bets_placed"] = runtime_config.dynamic_betting.recalc_interval
+    service.update_dynamic_bets_ordered()
+
+    assert runtime_context.betting_state.get("dynamic_targets") == ["R6"]
+    assert runtime_context.betting_state_2.get("dynamic_targets") == ["Y5"]
+
+
+def test_dynamic_prioritize_by_higher_step_slot2_higher() -> None:
+    # slot2 has higher current_step and should keep its token; slot1 must avoid it
+    configured_targets = (BetTarget("red", "6"),)
+    configured_targets_2 = (BetTarget("yellow", "4"),)
+    runtime_config = _make_runtime_config(configured_targets=configured_targets, multi_target_enabled=False)
+    runtime_config.dynamic_betting.enabled_2 = True
+    runtime_config.dynamic_betting.prioritize_by_higher_step_when_both_dynamic = True
+    runtime_context = _make_runtime_context_with_slot2(configured_targets, configured_targets_2)
+
+    # slot2 is ahead in steps
+    runtime_context.betting_state["current_step"] = 1
+    runtime_context.betting_state_2["current_step"] = 4
+    runtime_context.betting_state["total_bets_placed"] = runtime_config.dynamic_betting.recalc_interval
+    runtime_context.betting_state_2["total_bets_placed"] = runtime_config.dynamic_betting.recalc_interval
+
+    service = BettingRuntimeService(runtime_context, runtime_config)
+    stats = {
+        "red_6": {"freq": 50, "frequency": 50.0},
+        "yellow_5": {"freq": 40, "frequency": 40.0},
+        "yellow_4": {"freq": 30, "frequency": 30.0},
+    }
+    service.analyze_all_results_frequency = lambda: stats
+
+    # Compute both slots deterministically so higher-step slot wins priority
+    runtime_context.betting_state["total_bets_placed"] = runtime_config.dynamic_betting.recalc_interval
+    runtime_context.betting_state_2["total_bets_placed"] = runtime_config.dynamic_betting.recalc_interval
+    service.update_dynamic_bets_ordered()
+
+    # slot2 (higher step) gets best: R6
+    # slot1 (lower step) gets second-best after excluding R6: Y5
+    assert runtime_context.betting_state_2.get("dynamic_targets") == ["R6"]
+    assert runtime_context.betting_state.get("dynamic_targets") == ["Y5"]

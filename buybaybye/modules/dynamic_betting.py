@@ -535,7 +535,30 @@ def update_dynamic_bet(
 
         return runtime_context.get_current_bet_target()
 
-    best_outcome, best_specifier = get_best_combination_func(stats)
+    # If caller requested exclusion (e.g. leader token), filter stats so
+    # single-target selection won't pick an excluded combo.
+    stats_for_selection = stats
+    if excluded_tokens:
+        blocked_keys = set()
+        for t in excluded_tokens:
+            if not t:
+                continue
+            ut = str(t).strip().upper()
+            if ut == "D" or ut == "DOUBLE":
+                blocked_keys.add("double")
+            elif ut.startswith("R"):
+                blocked_keys.add(f"red_{ut[1:]}")
+            elif ut.startswith("Y"):
+                blocked_keys.add(f"yellow_{ut[1:]}")
+
+        filtered_stats = {k: v for k, v in stats.items() if k not in blocked_keys}
+        if not filtered_stats:
+            if bet_debug_enabled:
+                print(f"[DEBUG DYNAMIC] After excluding tokens {blocked_keys}, no candidates left", flush=True)
+            return current_outcome, current_specifier
+        stats_for_selection = filtered_stats
+
+    best_outcome, best_specifier = get_best_combination_func(stats_for_selection)
     old_outcome = current_outcome
     old_specifier = current_specifier
 

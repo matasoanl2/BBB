@@ -155,6 +155,8 @@ class DynamicBettingConfig:
     multi_target_enabled: bool = False
     preserve_color_ratio: bool = False
     lock_color: bool = False
+    # If true and both slots have dynamic enabled, prioritize the slot with larger current_step
+    prioritize_by_higher_step_when_both_dynamic: bool = False
 
 
 @dataclass(slots=True)
@@ -386,6 +388,7 @@ def load_runtime_config(app_dir: Path) -> RuntimeConfig:
             multi_target_enabled=_env_bool("DYNAMIC_MULTI_TARGET_ENABLED"),
             preserve_color_ratio=_env_bool("DYNAMIC_PRESERVE_COLOR_RATIO"),
             lock_color=_env_bool("DYNAMIC_LOCK_COLOR"),
+            prioritize_by_higher_step_when_both_dynamic=_env_bool("DYNAMIC_PRIORITIZE_BY_HIGHER_STEP", "false"),
         ),
         accounting=AccountingConfig(
             balance_stale_seconds=float(os.getenv("ACCOUNTING_BALANCE_STALE_SECONDS", "15")),

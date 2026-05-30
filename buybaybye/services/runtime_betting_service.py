@@ -305,6 +305,7 @@ class BettingRuntimeService:
 
         ctx = self.runtime_context
         blocked_tokens = excluded_tokens or set()
+
         betting_state = ctx.betting_state
         configured_targets = ctx.get_configured_bet_targets()
         is_single_target = len(configured_targets) == 1
@@ -344,6 +345,39 @@ class BettingRuntimeService:
                     }
 
         return ctx.get_current_bet_target()
+
+    def update_dynamic_bets_ordered(self) -> None:
+        """Orchestrate dynamic recalculation for both slots deterministically.
+
+        If `prioritize_by_higher_step_when_both_dynamic` is enabled, compute the
+        slot with the higher `current_step` first so the follower can avoid its token.
+        Otherwise compute slot1 then slot2.
+        """
+
+        ctx = self.runtime_context
+        dynamic_config = self.runtime_config.dynamic_betting
+
+        if (
+            dynamic_config.prioritize_by_higher_step_when_both_dynamic
+            and self.runtime_config.dynamic_betting.enabled
+            and self.runtime_config.dynamic_betting.enabled_2
+            and ctx.betting_state is not None
+            and ctx.betting_state_2 is not None
+        ):
+            slot1_step = ctx.betting_state.get("current_step", 0)
+            slot2_step = ctx.betting_state_2.get("current_step", 0)
+            if slot1_step >= slot2_step:
+                self.update_dynamic_bet()
+                leader_tokens = set(t for t in (ctx.betting_state.get("dynamic_targets") or []) if t)
+                self.update_dynamic_bet_2(excluded_tokens=leader_tokens)
+            else:
+                self.update_dynamic_bet_2()
+                leader_tokens = set(t for t in (ctx.betting_state_2.get("dynamic_targets") or []) if t)
+                self.update_dynamic_bet(excluded_tokens=leader_tokens)
+        else:
+            # Default order: slot1 then slot2
+            self.update_dynamic_bet()
+            self.update_dynamic_bet_2()
 
     def update_dynamic_bet_2(self, excluded_tokens: set[str] | None = None) -> tuple[str, str]:
         """Пересчитать dynamic-цель для slot2 и по возможности уйти от пересечения с slot1."""
