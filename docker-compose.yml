@@ -23,8 +23,8 @@ services:
       - -c
       - max_wal_size=128MB
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: elfykrwculavylxctljw
+      POSTGRES_PASSWORD: drdnu8gu0rabjubdjfdw
       POSTGRES_DB: buybaybye
       TZ: ${TZ:-Europe/Moscow}
       PGTZ: ${TZ:-Europe/Moscow}
