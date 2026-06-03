@@ -99,6 +99,15 @@ def get_browser_launch_args(*, runtime_config: RuntimeConfig | None = None) -> l
         "--disable-hang-monitor",
         "--password-store=basic",
         "--autoplay-policy=no-user-gesture-required",
+        # НАСТРОЙКИ ДЛЯ БЛОКИРОВКИ КЭША НА ДИСКЕ:
+<<<<<<< HEAD
+        "--disk-cache-dir=/tmp/browser-cache",   # Отправляет кэш страниц в пустоту
+=======
+        "--disk-cache-dir=/dev/null",   # Отправляет кэш страниц в пустоту
+>>>>>>> 785676b4f3389da500e8997c6cb0c912ae20cd65
+        "--disk-cache-size=1",          # Ограничивает размер кэша 1 байтом
+        "--media-cache-size=1",         # Минимальный кэш для аудио/видео элементов
+        "--disable-application-cache",  # Отключает кэш приложений (AppCache)
     ]
 
     if runtime_config is None:

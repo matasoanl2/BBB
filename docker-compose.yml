@@ -53,13 +53,15 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    tmpfs:
+      - /tmp
+      - /var/cache/fontconfig
     environment:
       PYTHONUNBUFFERED: "1"
       DB_HOST: postgres
       HEADLESS: "true"
       RUNTIME_ROLE: collector
       TZ: ${TZ:-Europe/Moscow}
-
     volumes:
       - ./strategies:/app/strategies:ro
     cpus: "0.80"
@@ -80,6 +82,9 @@ services:
         condition: service_healthy
     env_file:
       - .env
+    tmpfs:
+      - /tmp
+      - /var/cache/fontconfig
     environment:
       PYTHONUNBUFFERED: "1"
       DB_HOST: postgres
