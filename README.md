@@ -776,6 +776,63 @@ docker compose run --rm -p 9222:9222 bettor python scripts/profile/docker_auth.p
 
 > Важно: для Docker-профиля профиль сохраняется в смонтированный том, а не в обычную папку `./profile/`. Поэтому после авторизации проверьте содержимое `./profile_docker/` и, при необходимости, сделайте резервную копию файлами хоста.
 
+#### Docker: создание и восстановление профиля из бэкапа
+
+Если профиль уже сохранён в архиве и его нужно восстановить в Docker-том, выполните шаги ниже.
+
+##### 1. Как создать бэкап профиля
+
+Сначала убедитесь, что профиль уже существует в папке `./profile_docker/` (это том, который примонтирован к `/app/profile` внутри контейнера). После этого создайте архив на хосте:
+
+```powershell
+python save_profile.py save
+```
+
+- Архив будет создан в папке `./profile_backups/`
+- Имя файла будет вида: `profile_backup_YYYYMMDD_HHMMSS.tar.gz`
+
+Если нужно сохранить архив в конкретное место, можно указать путь вручную:
+
+```powershell
+python save_profile.py save -o .\profile_backups\my_backup.tar.gz
+```
+
+##### 2. Как восстановить профиль из бэкапа
+
+1. Убедитесь, что архив находится в папке проекта на хосте, например:
+   ```powershell
+   .\profile_backups\profile_backup_20260715_120000.tar.gz
+   ```
+
+2. Запустите контейнер приложения в одноразовом режиме и выполните восстановление изнутри него. Важно: путь к архиву должен быть тем, который доступен внутри контейнера, например `/app/profile_backups/...`:
+   ```powershell
+   docker compose run --rm bettor python save_profile.py restore /app/profile_backups/profile_backup_20260715_120000.tar.gz
+   ```
+
+   Если архив лежит на хосте в другой папке, сначала положите его в `./profile_backups/` проекта, а затем выполните команду выше. Например:
+   ```bash
+   cp ./my_backup.tar.gz ./profile_backups/
+   docker compose run --rm bettor python save_profile.py restore /app/profile_backups/my_backup.tar.gz
+   ```
+
+   Если `bettor` уже запущен и вы хотите работать с текущим контейнером, можно использовать:
+   ```powershell
+   docker compose up -d bettor
+   docker compose exec bettor python save_profile.py restore /app/profile_backups/profile_backup_20260715_120000.tar.gz
+   ```
+
+3. После восстановления запустите контейнер с тем же смонтированным томом:
+   ```powershell
+   docker compose up -d bettor
+   ```
+
+4. Если нужно, проверьте, что профиль появился в папке `./profile_docker/` на хосте:
+   ```powershell
+   dir .\profile_docker
+   ```
+
+> Важно: для Docker-режима восстановление выполняется изнутри контейнера, а архив должен быть доступен по пути внутри контейнера, например `/app/profile_backups/...`. Для этого в Compose добавлен монтированный том `./profile_backups:/app/profile_backups`.
+
 ### 🎲 Запуск с автоматическими ставками
 
 После успешной авторизации (профиль сохранён) можно включить автоматические ставки:
