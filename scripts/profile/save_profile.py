@@ -46,6 +46,16 @@ def get_profile_info() -> dict:
     }
 
 
+def _profile_tar_filter(tarinfo: tarfile.TarInfo) -> tarfile.TarInfo | None:
+    """Фильтр для tar: пропустить Chromium lock-файлы и нестандартные типы файлов."""
+    basename = os.path.basename(tarinfo.name)
+    if basename in {"SingletonLock", "SingletonSocket", "SingletonCookie"}:
+        return None
+    if tarinfo.isreg() or tarinfo.isdir():
+        return tarinfo
+    return None
+
+
 def save_profile(output_path: str = None) -> bool:
     """Сохранить текущий профиль браузера в сжатый архив."""
     if not PROFILE_DIR.exists():
@@ -67,7 +77,7 @@ def save_profile(output_path: str = None) -> bool:
         
         # Создать архив
         with tarfile.open(output_path, "w:gz") as tar:
-            tar.add(PROFILE_DIR, arcname="profile")
+            tar.add(PROFILE_DIR, arcname="profile", filter=_profile_tar_filter)
         
         # Получить размер архива
         archive_size = os.path.getsize(output_path)
