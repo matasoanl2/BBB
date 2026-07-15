@@ -642,12 +642,26 @@ python save_profile.py save
 python save_profile.py save -o ./my_profile_backup.tar.gz
 ```
 
+**Сохранить профиль из другой папки:**
+```bash
+python save_profile.py save --source-dir /path/to/profile -o ./my_profile_backup.tar.gz
+```
+- Можно явно указать, из какой папки брать профиль для архивации
+- По умолчанию используется `./profile`
+
 **Восстановить профиль из резервной копии:**
 ```bash
 python save_profile.py restore ./profile_backups/profile_backup_20260410_125530.tar.gz
 ```
 - Автоматически сохраняет текущий профиль перед восстановлением
 - Резервная копия текущего профиля: `profile_backups/profile_backup_before_restore_*.tar.gz`
+
+**Восстановить профиль в другую папку:**
+```bash
+python save_profile.py restore ./profile_backups/profile_backup_20260410_125530.tar.gz --target-dir /path/to/profile
+```
+- Можно явно задать папку, куда распаковать профиль после восстановления
+- По умолчанию используется `./profile`
 
 **Показать все доступные резервные копии:**
 ```bash

@@ -15,15 +15,23 @@ PROFILE_DIR = ROOT_DIR / "profile"
 BACKUPS_DIR = ROOT_DIR / "profile_backups"
 
 
-def get_profile_info() -> dict:
+def _resolve_profile_dir(profile_dir: str | Path | None = None) -> Path:
+    """Вернуть путь к профилю, используя явный аргумент или путь по умолчанию."""
+    if profile_dir is None:
+        return PROFILE_DIR
+    return Path(profile_dir).expanduser()
+
+
+def get_profile_info(profile_dir: str | Path | None = None) -> dict:
     """Вернуть краткую информацию о текущем профиле браузера."""
-    if not PROFILE_DIR.exists():
+    profile_dir = _resolve_profile_dir(profile_dir)
+    if not profile_dir.exists():
         return {"status": "no_profile", "message": "Профиль не существует"}
     
     # Получить размер профиля
     total_size = 0
     file_count = 0
-    for dirpath, dirnames, filenames in os.walk(PROFILE_DIR):
+    for dirpath, dirnames, filenames in os.walk(profile_dir):
         for filename in filenames:
             filepath = os.path.join(dirpath, filename)
             total_size += os.path.getsize(filepath)
@@ -31,14 +39,14 @@ def get_profile_info() -> dict:
     
     # Получить время последней модификации
     try:
-        mtime = os.path.getmtime(PROFILE_DIR)
+        mtime = os.path.getmtime(profile_dir)
         mtime_str = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
     except:
         mtime_str = "unknown"
     
     return {
         "status": "exists",
-        "path": str(PROFILE_DIR),
+        "path": str(profile_dir),
         "size_bytes": total_size,
         "size_mb": round(total_size / (1024 * 1024), 2),
         "files": file_count,
@@ -56,10 +64,11 @@ def _profile_tar_filter(tarinfo: tarfile.TarInfo) -> tarfile.TarInfo | None:
     return None
 
 
-def save_profile(output_path: str = None) -> bool:
+def save_profile(output_path: str = None, source_dir: str | Path | None = None) -> bool:
     """Сохранить текущий профиль браузера в сжатый архив."""
-    if not PROFILE_DIR.exists():
-        print("[ERROR] Профиль браузера не найден:", PROFILE_DIR)
+    profile_dir = _resolve_profile_dir(source_dir)
+    if not profile_dir.exists():
+        print("[ERROR] Профиль браузера не найден:", profile_dir)
         return False
     
     # Создать директорию для резервных копий
@@ -73,11 +82,12 @@ def save_profile(output_path: str = None) -> bool:
         output_path = Path(output_path)
     
     try:
+        print(f"[SAVE] Сохранение профиля из: {profile_dir}")
         print(f"[SAVE] Сохранение профиля в: {output_path}")
         
         # Создать архив
         with tarfile.open(output_path, "w:gz") as tar:
-            tar.add(PROFILE_DIR, arcname="profile", filter=_profile_tar_filter)
+            tar.add(profile_dir, arcname="profile", filter=_profile_tar_filter)
         
         # Получить размер архива
         archive_size = os.path.getsize(output_path)
@@ -95,9 +105,10 @@ def save_profile(output_path: str = None) -> bool:
         return False
 
 
-def restore_profile(backup_path: str) -> bool:
+def restore_profile(backup_path: str, target_dir: str | Path | None = None) -> bool:
     """Восстановить профиль браузера из резервной копии."""
     backup_path = Path(backup_path)
+    target_dir = _resolve_profile_dir(target_dir)
     
     if not backup_path.exists():
         print(f"[ERROR] Файл резервной копии не найден: {backup_path}")
@@ -107,24 +118,32 @@ def restore_profile(backup_path: str) -> bool:
         print(f"[RESTORE] Восстановление профиля из: {backup_path}")
         
         # Создать backup текущего профиля (если существует)
-        if PROFILE_DIR.exists():
+        if target_dir.exists():
             print("[INFO] Текущий профиль сохранён как резервную копию...")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             backup_current = BACKUPS_DIR / f"profile_backup_before_restore_{timestamp}.tar.gz"
             with tarfile.open(backup_current, "w:gz") as tar:
-                tar.add(PROFILE_DIR, arcname="profile")
+                tar.add(target_dir, arcname="profile", filter=_profile_tar_filter)
             print(f"[OK] Резервная копия сохранена: {backup_current}")
             
             # Удалить текущий профиль
-            shutil.rmtree(PROFILE_DIR)
+            shutil.rmtree(target_dir)
+        
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
         
         # Распаковать новый профиль
         with tarfile.open(backup_path, "r:gz") as tar:
-            tar.extractall(PROFILE_DIR.parent)
+            tar.extractall(target_dir.parent)
+
+        extracted_profile = target_dir.parent / "profile"
+        if extracted_profile.exists() and extracted_profile != target_dir:
+            if target_dir.exists():
+                shutil.rmtree(target_dir)
+            extracted_profile.rename(target_dir)
         
         print(f"[OK] Профиль успешно восстановлен!")
         print(f"  - Из файла: {backup_path}")
-        print(f"  - Путь: {PROFILE_DIR}")
+        print(f"  - Путь: {target_dir}")
         print(f"  - Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
         return True
@@ -201,10 +220,12 @@ def main():
     # Команда save
     save_parser = subparsers.add_parser("save", help="Сохранить профиль в архив")
     save_parser.add_argument("-o", "--output", help="Путь для сохранения архива (опционально)")
+    save_parser.add_argument("-s", "--source-dir", help="Путь к папке профиля, которую нужно упаковать в архив")
     
     # Команда restore
     restore_parser = subparsers.add_parser("restore", help="Восстановить профиль из архива")
     restore_parser.add_argument("backup", help="Путь к архиву резервной копии")
+    restore_parser.add_argument("-t", "--target-dir", help="Путь, куда распаковать профиль (по умолчанию: ./profile)")
     
     # Команда list
     subparsers.add_parser("list", help="Показать список всех резервных копий")
@@ -228,11 +249,11 @@ def main():
             print(f"  {key}: {value}")
     
     elif args.command == "save":
-        success = save_profile(args.output)
+        success = save_profile(args.output, args.source_dir)
         sys.exit(0 if success else 1)
     
     elif args.command == "restore":
-        success = restore_profile(args.backup)
+        success = restore_profile(args.backup, args.target_dir)
         sys.exit(0 if success else 1)
     
     elif args.command == "list":
